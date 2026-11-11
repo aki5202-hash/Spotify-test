@@ -68,6 +68,8 @@ button{font:inherit;color:inherit;cursor:pointer;touch-action:manipulation;-webk
 .now-text{min-width:0;flex:1}.now-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.button.now-title{display:block;width:100%;background:none;border:none;padding:0;text-align:left;font:inherit;font-weight:600;color:inherit;min-height:44px}.now-artist{color:var(--sub);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lyrics-card{max-height:min(92vh,900px)}
 .lyrics-body{overflow:auto;padding:4px 6px 12px;display:flex;flex-direction:column;gap:10px}
+.lyric-head{display:flex;gap:12px;align-items:center}
+.lyric-art{width:72px;height:72px;border-radius:8px;object-fit:cover;flex:none;background:#222}
 .lyric-head strong{font-size:18px}
 .lyric-about{background:#221c12;border:1px solid #5a4a16;border-radius:10px;padding:10px 12px}
 .lyric-about h4{margin:0 0 6px;font-size:13px;color:#f3d87a}

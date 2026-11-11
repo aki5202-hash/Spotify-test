@@ -1176,26 +1176,65 @@ $('#shareClose').onclick = closeShare;
 $('#ytExportBackdrop').onclick = closeYouTubeExport;
 $('#ytExportClose').onclick = closeYouTubeExport;
 function closeLyrics() { $('#lyricsSheet').classList.add('hidden'); }
+function lyricNorm(s) {
+  return String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\u4e00-\u9fff]+/gi, ' ').replace(/\s+/g, ' ').trim();
+}
+function placeAnnotations(lines, annotations) {
+  const pieces = [];
+  let joined = '';
+  (lines || []).forEach((line, i) => {
+    const n = lyricNorm(line);
+    if (joined && n) joined += ' ';
+    const start = joined.length;
+    joined += n;
+    pieces.push({ i, start, end: joined.length, norm: n });
+  });
+  const notesAt = (lines || []).map(() => []);
+  const markLine = (lines || []).map(() => false);
+  const unmatched = [];
+  for (const ann of annotations || []) {
+    const frag = lyricNorm(ann.fragment);
+    if (!frag || !joined) { unmatched.push(ann); continue; }
+    const idx = joined.indexOf(frag);
+    if (idx < 0) { unmatched.push(ann); continue; }
+    const end = idx + frag.length;
+    const hit = pieces.filter(p => p.norm && p.end > idx && p.start < end);
+    if (!hit.length) { unmatched.push(ann); continue; }
+    hit.forEach(p => { markLine[p.i] = true; });
+    notesAt[hit[hit.length - 1].i].push(ann);
+  }
+  return { markLine, notesAt, unmatched };
+}
 function renderLyrics(d) {
-  const lines = (d.lines || []).map(line => {
-    const bits = (line.parts || []).map(p => {
-      const text = esc(p.text || '');
-      if (!p.note) return text;
-      return `<mark class="lyric-mark">${text}</mark><div class="lyric-note"><span class="lyric-note-label">註解</span>${esc(p.note)}</div>`;
-    }).join('');
-    return `<p class="lyric-line">${bits || '&nbsp;'}</p>`;
+  const song = d.song || {};
+  const lines = Array.isArray(d.lyrics) ? d.lyrics : [];
+  const annotations = Array.isArray(d.annotations) ? d.annotations : [];
+  const placed = lines.length ? placeAnnotations(lines, annotations) : { markLine: [], notesAt: [], unmatched: annotations };
+  const lineHtml = lines.map((line, i) => {
+    const text = esc(line || '');
+    const body = placed.markLine[i] ? `<mark class="lyric-mark">${text || ' '}</mark>` : (text || '&nbsp;');
+    const notes = (placed.notesAt[i] || []).map(ann => `<div class="lyric-note"><span class="lyric-note-label">註解${ann.votes ? ' · ' + ann.votes + ' 票' : ''}</span>${esc(ann.text || '')}</div>`).join('');
+    return `<p class="lyric-line">${body}</p>${notes}`;
   }).join('');
-  const about = d.about ? `<section class="lyric-about"><h4>歌曲簡介</h4><p>${esc(d.about)}</p></section>` : '';
-  const link = d.url ? `<a class="btn ghost" target="_blank" rel="noopener" href="${esc(d.url)}">在 Genius 查看</a>` : '';
-  $('#lyricsTitle').textContent = d.title ? `歌詞 · ${d.title}` : '歌詞';
-  $('#lyricsBody').innerHTML = `<div class="lyric-head"><strong>${esc(d.title || '')}</strong><div>${esc(d.artist || '')}</div></div>${about}<div class="lyric-lines">${lines || '<p class="sheet-note">這首歌在 Genius 上沒有歌詞。</p>'}</div><p class="sheet-note">歌詞與註解來自 Genius，註解已全部展開。</p>${link}`;
+  const unmatched = (lines.length ? placed.unmatched : annotations).filter(a => a && (a.fragment || a.text));
+  const extraTitle = lines.length ? '其他註解' : '註解';
+  const extra = unmatched.length ? `<section class="lyric-about"><h4>${extraTitle}</h4>${unmatched.map(ann => `<p><mark class="lyric-mark">${esc(ann.fragment || '')}</mark></p><div class="lyric-note"><span class="lyric-note-label">註解${ann.votes ? ' · ' + ann.votes + ' 票' : ''}</span>${esc(ann.text || '')}</div>`).join('')}</section>` : '';
+  const about = song.description ? `<section class="lyric-about"><h4>歌曲簡介</h4><p>${esc(song.description)}</p></section>` : '';
+  const art = song.art ? `<img class="lyric-art" alt="" src="${esc(song.art)}" />` : '';
+  const note = d.note ? `<p class="sheet-note">${esc(d.note)}</p>` : '';
+  const link = song.url ? `<a class="btn ghost" target="_blank" rel="noopener" href="${esc(song.url)}">在 Genius 查看</a>` : '';
+  const body = lines.length
+    ? `<div class="lyric-lines">${lineHtml}</div>${extra}`
+    : `<div class="lyric-lines">${extra || '<p class="sheet-note">找不到歌詞，也沒有註解。</p>'}</div>`;
+  $('#lyricsTitle').textContent = song.title ? `歌詞 · ${song.title}` : '歌詞';
+  $('#lyricsBody').innerHTML = `<div class="lyric-head">${art}<div><strong>${esc(song.title || '')}</strong><div>${esc(song.artist || '')}</div></div></div>${note}${about}${body}<p class="sheet-note">歌詞來自 LRCLIB，註解來自 Genius，已全部展開。</p>${link}`;
 }
 async function openLyrics(track) {
   track = track || state.queue[state.qIndex];
   if (!track || !track.title) { toast('還沒有歌曲'); return; }
   $('#lyricsSheet').classList.remove('hidden');
   $('#lyricsTitle').textContent = '歌詞';
-  $('#lyricsBody').innerHTML = '<p class="sheet-note">正在讀取 Genius 歌詞…</p>';
+  $('#lyricsBody').innerHTML = '<p class="sheet-note">正在讀取歌詞…</p>';
   try {
     const q = new URLSearchParams({ artist: track.artist || '', title: track.title || '' });
     const r = await fetch('/api/lyrics?' + q);
