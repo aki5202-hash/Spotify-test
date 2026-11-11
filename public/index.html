@@ -25,7 +25,10 @@
     <div class="side-section">
       <div class="side-title">
         我的歌單
-        <button type="button" id="newPlBtn" class="icon-btn" title="新增歌單">＋</button>
+        <span class="side-actions">
+          <button type="button" id="importBtn" class="text-btn" title="匯入歌單">匯入</button>
+          <button type="button" id="newPlBtn" class="icon-btn" title="新增歌單">＋</button>
+        </span>
       </div>
       <div id="customList"></div>
     </div>
@@ -35,7 +38,7 @@
     <section id="emptyState" class="empty">
       <div class="empty-icon">🎵</div>
       <h2>貼上 Spotify 歌單網址開始聆聽</h2>
-      <p>每首歌會自動播放 30 秒試聽，播完自動下一首。<br>按任何歌曲右邊的 <b>＋</b> 即可加入你的自訂歌單。</p>
+      <p>每首歌會自動播放 30 秒試聽，播完自動下一首。也可以切到 YouTube 看官方影片。<br>按任何歌曲右邊的 <b>＋</b> 即可加入你的自訂歌單。</p>
       <button class="btn ghost" id="demoBtn">試試看：Today’s Top Hits</button>
     </section>
 
@@ -49,8 +52,10 @@
           <div class="view-actions">
             <button id="playAllBtn" class="btn primary round">▶ 播放全部</button>
             <button id="shuffleBtn" class="btn ghost round">🔀 隨機播放</button>
-            <button id="renameBtn" class="btn ghost round hidden">✏️ 重新命名</button>
-            <button id="deleteBtn" class="btn ghost round danger hidden">🗑 刪除歌單</button>
+            <button type="button" id="ytExportBtn" class="btn primary round hidden">在 YouTube 開啟</button>
+            <button type="button" id="exportBtn" class="btn ghost round hidden">匯出／分享</button>
+            <button type="button" id="renameBtn" class="btn ghost round hidden">重新命名</button>
+            <button type="button" id="deleteBtn" class="btn ghost round danger hidden">刪除歌單</button>
             <a id="openSpotify" class="btn ghost round hidden" target="_blank" rel="noopener">在 Spotify 開啟</a>
           </div>
         </div>
@@ -65,6 +70,10 @@
 </div>
 
 <footer class="player">
+  <div id="ytDock" class="yt-dock hidden">
+    <div class="yt-frame"><div id="ytMount"></div></div>
+    <button type="button" id="ytPickBtn" class="yt-match">尚未配對 YouTube 影片</button>
+  </div>
     <div class="now">
     <div class="now-visual">
       <img id="nowCover" class="now-cover" alt="" />
@@ -89,6 +98,10 @@
     </div>
   </div>
   <div class="extra">
+    <div class="mode" role="group" aria-label="播放模式">
+      <button type="button" id="modeAudio" class="mode-btn on">試聽</button>
+      <button type="button" id="modeVideo" class="mode-btn">YouTube</button>
+    </div>
     <label class="toggle" title="播完自動下一首"><input type="checkbox" id="autoNext" checked /> 自動下一首</label>
     <span>🔊</span><input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" />
   </div>
@@ -122,8 +135,43 @@
   </form>
 </div>
 
+<div id="shareSheet" class="sheet hidden">
+  <div class="sheet-backdrop" id="shareBackdrop"></div>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+    <div class="sheet-head">
+      <div id="shareTitle" class="sheet-title">匯出／分享</div>
+      <button type="button" id="shareClose" class="icon-btn" aria-label="關閉">✕</button>
+    </div>
+    <div class="sheet-list" id="shareActions"></div>
+  </div>
+</div>
+
+<div id="ytExportSheet" class="sheet hidden">
+  <div class="sheet-backdrop" id="ytExportBackdrop"></div>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="ytExportTitle">
+    <div class="sheet-head">
+      <div id="ytExportTitle" class="sheet-title">YouTube 歌單</div>
+      <button type="button" id="ytExportClose" class="icon-btn" aria-label="關閉">✕</button>
+    </div>
+    <div id="ytExportBody" class="sheet-list"></div>
+  </div>
+</div>
+
+<div id="pickSheet" class="sheet hidden">
+  <div class="sheet-backdrop" id="pickBackdrop"></div>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="pickTitle">
+    <div class="sheet-head">
+      <div id="pickTitle" class="sheet-title">選擇影片</div>
+      <button type="button" id="pickClose" class="icon-btn" aria-label="關閉">✕</button>
+    </div>
+    <div id="pickList" class="sheet-list"></div>
+  </div>
+</div>
+
+<input id="importFile" type="file" accept="application/json,.json" hidden />
 <div id="toast" class="toast"></div>
 <audio id="audio" preload="auto" playsinline webkit-playsinline></audio>
+<script src="https://www.youtube.com/iframe_api"></script>
 <script src="app.js"></script>
 </body>
 </html>

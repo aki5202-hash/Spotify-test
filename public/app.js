@@ -15,7 +15,14 @@ const state = {
   custom: loadCustom(),  // [{id,name,tracks:[]}]
   view: null,            // {kind:'source'} | {kind:'custom', id}
   queue: [], qIndex: -1, queueKey: null,
+  mode: 'audio',
 };
+const KIND_LABEL = { mv: '官方 MV', audio: '官方音源', lyric: '歌詞版', visualizer: '視覺化', topic: 'Topic', official: '官方影片', other: '其他', picked: '已選影片' };
+let ytPlayer = null;
+let ytReady = false;
+let ytCreating = false;
+let pendingVideo = null;
+let ytPoll = 0;
 
 let liveToken = 0;
 let ignoreEnded = false;
@@ -30,7 +37,15 @@ let modalResolver = null;
 /* ---------- 儲存 ---------- */
 function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
 function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch { return false; } }
-function loadCustom() { try { return JSON.parse(lsGet(LS_KEY)) || []; } catch { return []; } }
+function loadCustom() {
+  try {
+    const list = JSON.parse(lsGet(LS_KEY)) || [];
+    for (const p of list) for (const t of p.tracks || []) {
+      if (t && t.ytVideoId && !t.ytPick) t.ytPick = { videoId: t.ytVideoId, title: t.title || '', channel: '', kind: 'picked', url: 'https://www.youtube.com/watch?v=' + t.ytVideoId };
+    }
+    return list;
+  } catch { return []; }
+}
 function saveCustom() {
   if (!lsSet(LS_KEY, JSON.stringify(state.custom)) && !storageWarned) {
     storageWarned = true;
@@ -39,7 +54,8 @@ function saveCustom() {
   renderSidebar();
 }
 const uid = () => Math.random().toString(36).slice(2, 10);
-const slim = t => ({ id: t.id, title: t.title, artist: t.artist, duration: t.duration, preview: t.preview, cover: t.cover, video: t.video || null, videoThumb: t.videoThumb || null });
+function videoIdOf(t) { return (t && ((t.ytPick && t.ytPick.videoId) || t.ytVideoId)) || null; }
+const slim = t => ({ id: t.id, title: t.title, artist: t.artist, duration: t.duration, preview: t.preview, cover: t.cover, video: t.video || null, videoThumb: t.videoThumb || null, ytVideoId: videoIdOf(t) });
 
 /* ---------- 工具 ---------- */
 const fmt = s => { s = Math.max(0, Math.floor(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
@@ -81,7 +97,7 @@ function showVisual(track) {
     }
     videoEl.classList.remove('hidden');
     $('#nowCover').classList.add('hidden');
-    document.documentElement.style.setProperty('--player-h', '160px');
+    if (state.mode !== 'youtube') document.documentElement.style.setProperty('--player-h', '160px');
   } else {
     if (videoEl.dataset.src) {
       videoEl.pause();
@@ -92,7 +108,7 @@ function showVisual(track) {
     videoEl.classList.add('hidden');
     $('#nowCover').classList.remove('hidden');
     $('#nowCover').src = (track && (track.cover || track.videoThumb)) || PLACEHOLDER;
-    document.documentElement.style.setProperty('--player-h', '92px');
+    if (state.mode !== 'youtube') document.documentElement.style.setProperty('--player-h', '92px');
   }
 }
 videoEl.addEventListener('error', () => {
@@ -190,6 +206,8 @@ function showView(view) {
   $('#viewCover').src = isCustom ? (tracks.find(t => t.cover)?.cover || PLACEHOLDER) : (pl.cover || PLACEHOLDER);
   $('#renameBtn').classList.toggle('hidden', !isCustom);
   $('#deleteBtn').classList.toggle('hidden', !isCustom);
+  $('#exportBtn').classList.toggle('hidden', !isCustom);
+  $('#ytExportBtn').classList.toggle('hidden', !isCustom);
   const os = $('#openSpotify');
   os.classList.toggle('hidden', isCustom);
   if (!isCustom) os.href = `https://open.spotify.com/${pl.type || 'playlist'}/${pl.id}`;
@@ -209,10 +227,12 @@ function renderTracks() {
   const playingHere = (state.queueKey || '').split(':shuffle')[0] === viewKey();
   ol.innerHTML = tracks.map((t, i) => {
     const isCur = playingHere && cur && cur.id === t.id;
-    return `<li class="track ${isCur ? 'current' : ''} ${t.preview ? '' : 'nopreview'} ${audio.paused ? 'paused' : ''}" data-i="${i}" data-id="${t.id}">
+    const dim = state.mode === 'youtube' ? !!t.ytMiss : !t.preview;
+    const ytBadge = state.mode === 'youtube' && t.ytMiss ? '<span class="badge">無影片</span>' : '';
+    return `<li class="track ${isCur ? 'current' : ''} ${dim ? 'nopreview' : ''} ${audio.paused ? 'paused' : ''}" data-i="${i}" data-id="${t.id}">
       <span class="t-num">${isCur ? '<span class="eq"><i></i><i></i><i></i></span>' : i + 1}</span>
       <span class="t-main"><img class="t-cover" data-cover="${t.id}" src="${esc(t.cover || PLACEHOLDER)}" alt="" loading="lazy" onerror="imgErr(this)" />
-        <span class="t-text"><div class="t-title">${esc(t.title)}${t.preview ? '' : '<span class="badge">無試聽</span>'}${t.video ? '<span class="badge clip">短片</span>' : ''}</div><div class="t-artist">${esc(t.artist)}</div></span></span>
+        <span class="t-text"><div class="t-title">${esc(t.title)}${state.mode === 'youtube' ? ytBadge : (t.preview ? '' : '<span class="badge">無試聽</span>')}${t.video ? '<span class="badge clip">短片</span>' : ''}</div><div class="t-artist">${esc(t.artist)}</div></span></span>
       <span class="t-dur">${fmt((t.duration || 0) / 1000)}</span>
       <span class="t-actions">
         <button type="button" class="icon-btn add" title="加入歌單" aria-label="加入歌單">＋</button>
@@ -250,6 +270,7 @@ function stopAtEnd() {
   ignoreEnded = true;
   clearTimeout(ignoreTimer);
   audio.pause();
+  try { if (ytPlayer && ytPlayer.pauseVideo) ytPlayer.pauseVideo(); } catch {}
   toast('已播完整個歌單');
   updatePlayBtn();
   ignoreTimer = setTimeout(() => { ignoreEnded = false; }, 400);
@@ -263,13 +284,21 @@ function startTrack(i, dir) {
   while (tries < q.length) {
     if (i >= q.length) { stopAtEnd(); return; }
     if (i < 0) { i = 0; dir = 1; }
-    if (q[i] && q[i].preview) break;
+    if (q[i] && (state.mode === 'youtube' ? !q[i].ytMiss : q[i].preview)) break;
     i += dir;
     tries++;
   }
-  if (tries >= q.length || !q[i] || !q[i].preview) { stopAtEnd(); return; }
   const t = q[i];
+  if (tries >= q.length || !t || (state.mode === 'youtube' ? t.ytMiss : !t.preview)) { stopAtEnd(); return; }
   state.qIndex = i;
+  if (state.mode === 'youtube') {
+    liveToken += 1;
+    const token = liveToken;
+    audio.dataset.trackId = t.id;
+    audio.pause();
+    beginYouTube(t, i, token);
+    return;
+  }
   liveToken += 1;
   const token = liveToken;
   audio.dataset.token = String(token);
@@ -299,6 +328,7 @@ function advance(dir) {
 }
 
 function onPreviewEnded() {
+  if (state.mode === 'youtube') return;
   const src = audio.currentSrc || audio.src || '';
   if (!src || src.startsWith('data:')) return;
   if (ignoreEnded) return;
@@ -323,11 +353,31 @@ function updateNow() {
   }
   renderTracks(); renderSidebar(); updatePlayBtn();
 }
+function ytPlaying() {
+  if (!ytPlayer || !ytPlayer.getPlayerState || !window.YT) return false;
+  const st = ytPlayer.getPlayerState();
+  return st === YT.PlayerState.PLAYING || st === YT.PlayerState.BUFFERING;
+}
 function updatePlayBtn() {
-  $('#playBtn').textContent = audio.paused ? '▶' : '⏸';
-  document.querySelectorAll('.track').forEach(li => li.classList.toggle('paused', audio.paused));
+  const paused = state.mode === 'youtube' ? !ytPlaying() : audio.paused;
+  $('#playBtn').textContent = paused ? '▶' : '⏸';
+  document.querySelectorAll('.track').forEach(li => li.classList.toggle('paused', paused));
 }
 function togglePlay() {
+  if (state.mode === 'youtube') {
+    armYouTube();
+    if (!state.queue.length) {
+      const tracks = currentViewTracks();
+      if (tracks.length) playList(tracks, 0, viewKey());
+      return;
+    }
+    if (ytPlaying()) { try { ytPlayer.pauseVideo(); } catch {} }
+    else if (ytPlayer && ytPlayer.playVideo && state.queue[state.qIndex] && videoIdOf(state.queue[state.qIndex])) {
+      try { ytPlayer.playVideo(); } catch {}
+    } else startTrack(Math.max(0, state.qIndex), 1);
+    updatePlayBtn();
+    return;
+  }
   unlockAudio();
   if (!state.queue.length) {
     const tracks = currentViewTracks();
@@ -341,7 +391,11 @@ function togglePlay() {
 }
 const next = () => advance(1);
 const prev = () => {
-  if (audio.currentTime > 3) { markUserSeek(); audio.currentTime = 0; return; }
+  if (state.mode === 'youtube' && ytPlayer && ytPlayer.getCurrentTime && ytPlayer.getCurrentTime() > 3) {
+    try { ytPlayer.seekTo(0, true); } catch {}
+    return;
+  }
+  if (state.mode !== 'youtube' && audio.currentTime > 3) { markUserSeek(); audio.currentTime = 0; return; }
   advance(-1);
 };
 
@@ -359,6 +413,7 @@ audio.addEventListener('error', () => {
   if ($('#autoNext').checked) setTimeout(() => { if (audio.dataset.token === token) advance(1); }, 250);
 });
 audio.addEventListener('timeupdate', () => {
+  if (state.mode === 'youtube') return;
   const src = audio.currentSrc || audio.src || '';
   if (!src || src.startsWith('data:')) return;
   const t = audio.currentTime || 0;
@@ -379,9 +434,19 @@ $('#progress').addEventListener('pointerdown', markUserSeek);
 $('#progress').addEventListener('click', e => {
   markUserSeek();
   const r = e.currentTarget.getBoundingClientRect();
-  if (audio.duration) audio.currentTime = (e.clientX - r.left) / r.width * audio.duration;
+  const ratio = (e.clientX - r.left) / r.width;
+  if (state.mode === 'youtube' && ytPlayer && ytPlayer.getDuration && ytPlayer.seekTo) {
+    const d = ytPlayer.getDuration();
+    if (d) ytPlayer.seekTo(Math.max(0, Math.min(d, ratio * d)), true);
+    return;
+  }
+  if (audio.duration) audio.currentTime = ratio * audio.duration;
 });
-$('#volume').addEventListener('input', e => { audio.volume = +e.target.value; lsSet('spp.vol', e.target.value); });
+$('#volume').addEventListener('input', e => {
+  audio.volume = +e.target.value;
+  lsSet('spp.vol', e.target.value);
+  try { if (ytPlayer && ytPlayer.setVolume) ytPlayer.setVolume(Math.round((+e.target.value) * 100)); } catch {}
+});
 audio.volume = +(lsGet('spp.vol') || 0.8); $('#volume').value = audio.volume;
 $('#playBtn').onclick = togglePlay; $('#nextBtn').onclick = next; $('#prevBtn').onclick = prev;
 if ('mediaSession' in navigator) {
@@ -392,7 +457,7 @@ if ('mediaSession' in navigator) {
 }
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-  if (e.key === 'Escape') { closeSheet(); closeModal(null); return; }
+  if (e.key === 'Escape') { closeSheet(); closeShare(); closeYouTubeExport(); closePick(); closeModal(null); return; }
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
   if (e.code === 'ArrowRight' && e.shiftKey) next();
   if (e.code === 'ArrowLeft' && e.shiftKey) prev();
@@ -500,6 +565,12 @@ $('#trackList').addEventListener('click', e => {
     showView(state.view);
     return;
   }
+  if (state.mode === 'youtube') {
+    armYouTube();
+    if (t.ytMiss) { toast('這首沒有合適的 YouTube 影片'); return; }
+    playList(tracks, i, viewKey());
+    return;
+  }
   if (!t.preview) { toast('這首歌沒有 30 秒試聽，可在 Spotify 開啟收聽'); window.open(`https://open.spotify.com/track/${t.id}`, '_blank'); return; }
   unlockAudio();
   playList(tracks, i, viewKey());
@@ -534,15 +605,415 @@ $('#deleteBtn').onclick = async () => {
   if (state.source) showView({ kind: 'source' });
   else { state.view = null; $('#viewSection').classList.add('hidden'); $('#emptyState').classList.remove('hidden'); renderSidebar(); }
 };
-$('#playAllBtn').onclick = () => { unlockAudio(); const t = currentViewTracks(); if (t.length) playList(t, 0, viewKey()); };
+$('#playAllBtn').onclick = () => {
+  if (state.mode === 'youtube') armYouTube(); else unlockAudio();
+  const t = currentViewTracks();
+  if (t.length) playList(t, 0, viewKey());
+};
 $('#shuffleBtn').onclick = () => {
-  unlockAudio();
+  if (state.mode === 'youtube') armYouTube(); else unlockAudio();
   const t = currentViewTracks().slice();
   for (let i = t.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [t[i], t[j]] = [t[j], t[i]]; }
   if (t.length) playList(t, 0, viewKey() + ':shuffle');
 };
 
-$('#loadForm').addEventListener('submit', e => { e.preventDefault(); unlockAudio(); const u = $('#urlInput').value.trim(); if (u) loadPlaylist(u); else toast('請先貼上 Spotify 歌單網址'); });
+/* ---------- YouTube 模式 ---------- */
+function syncPlayerHeight() {
+  const h = Math.ceil($('.player').getBoundingClientRect().height);
+  if (h > 40) document.documentElement.style.setProperty('--player-h', h + 'px');
+}
+if (window.ResizeObserver) new ResizeObserver(() => syncPlayerHeight()).observe(document.querySelector('.player'));
+function kindLabel(kind) { return KIND_LABEL[kind] || '影片'; }
+function matchLine(v) {
+  if (!v) return '沒有合適的影片，點這裡看其他結果';
+  const bits = [kindLabel(v.kind), v.channel, v.title].filter(Boolean);
+  const clock = v.duration ? fmt(v.duration) : '';
+  return (clock ? clock + ' · ' : '') + bits.join(' · ');
+}
+function setMatchLabel(text) { const b = $('#ytPickBtn'); if (b) b.textContent = text; }
+function showDock() {
+  $('#ytDock').classList.remove('hidden');
+  document.body.classList.add('video-mode');
+  setTimeout(syncPlayerHeight, 40);
+}
+function armYouTube() {
+  showDock();
+  if (window.YT && YT.Player) createYT();
+}
+function createYT() {
+  if (ytPlayer || ytCreating || !window.YT || !YT.Player || !$('#ytMount')) return;
+  ytCreating = true;
+  ytPlayer = new YT.Player('ytMount', {
+    width: '100%',
+    height: '100%',
+    playerVars: { playsinline: 1, rel: 0, modestbranding: 1, autoplay: 1, origin: location.origin, enablejsapi: 1 },
+    events: {
+      onReady() {
+        ytReady = true;
+        ytCreating = false;
+        try { ytPlayer.setVolume(Math.round(audio.volume * 100)); } catch {}
+        if (pendingVideo && pendingVideo.token === liveToken) {
+          const p = pendingVideo;
+          pendingVideo = null;
+          try { ytPlayer.loadVideoById({ videoId: p.videoId }); } catch {}
+        }
+        syncPlayerHeight();
+      },
+      onStateChange(e) {
+        updatePlayBtn();
+        if (e.data === YT.PlayerState.ENDED && state.mode === 'youtube' && $('#autoNext').checked) advanceYouTube();
+      },
+      onError() {
+        if (state.mode !== 'youtube') return;
+        toast('這部影片無法播放，跳到下一首');
+        if ($('#autoNext').checked) advance(1);
+      },
+    },
+  });
+}
+const prevYTReady = window.onYouTubeIframeAPIReady;
+window.onYouTubeIframeAPIReady = function () {
+  if (typeof prevYTReady === 'function') prevYTReady();
+  if (pendingVideo) createYT();
+};
+function loadYT(picked, token) {
+  if (!picked || !picked.videoId) return;
+  pendingVideo = { videoId: picked.videoId, token };
+  showDock();
+  setMatchLabel(matchLine(picked));
+  if (ytReady && ytPlayer && ytPlayer.loadVideoById) {
+    try { ytPlayer.loadVideoById({ videoId: picked.videoId }); } catch {}
+    pendingVideo = null;
+  } else armYouTube();
+}
+function applyMatch(track, data) {
+  track.yt = data;
+  track.ytCandidates = data.candidates || [];
+  if (track.ytPick && track.ytPick.manual) return;
+  if (data.picked) {
+    track.ytPick = data.picked;
+    track.ytVideoId = data.picked.videoId;
+    track.ytMiss = false;
+  } else {
+    track.ytMiss = true;
+  }
+}
+async function fetchMatch(track) {
+  if (track.yt && (track.yt.picked || track.yt.skipped || track.yt.error)) return track.yt;
+  const q = new URLSearchParams({ artist: track.artist || '', title: track.title || '', duration: String(track.duration || 0) });
+  const r = await fetch('/api/youtube?' + q);
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || '配對失敗');
+  applyMatch(track, data);
+  return data;
+}
+function prefetchAround(i) {
+  for (const t of [state.queue[i + 1], state.queue[i + 2]]) {
+    if (t && !t.yt && !t.ytMiss) fetchMatch(t).catch(() => {});
+  }
+}
+async function beginYouTube(t, i, token) {
+  showDock();
+  setMatchLabel('正在尋找 YouTube 影片…');
+  updateNow();
+  let data = null;
+  try { data = await fetchMatch(t); }
+  catch (err) {
+    if (token !== liveToken) return;
+    if (t.ytPick && t.ytPick.videoId) { loadYT(t.ytPick, token); updateNow(); return; }
+    t.ytMiss = true;
+    toast('YouTube 配對失敗，跳過');
+    if ($('#autoNext').checked) startTrack(i + 1, 1);
+    return;
+  }
+  if (token !== liveToken) return;
+  const picked = (t.ytPick && t.ytPick.manual && t.ytPick.videoId) ? t.ytPick : (data && data.picked);
+  if (!picked) {
+    t.ytMiss = true;
+    setMatchLabel('沒有合適的影片，點這裡看其他結果');
+    renderTracks();
+    toast(`「${t.title}」沒有合適的影片，已跳過`);
+    if ($('#autoNext').checked) startTrack(i + 1, 1);
+    return;
+  }
+  t.ytPick = t.ytPick && t.ytPick.manual ? t.ytPick : picked;
+  t.ytVideoId = t.ytPick.videoId;
+  t.ytMiss = false;
+  loadYT(t.ytPick, token);
+  updateNow();
+  prefetchAround(i);
+}
+function advanceYouTube() {
+  const q = state.queue;
+  let i = state.qIndex + 1;
+  let tries = 0;
+  while (i < q.length && tries < q.length && q[i] && q[i].ytMiss) { i++; tries++; }
+  if (i >= q.length) { stopAtEnd(); return; }
+  const t = q[i];
+  const picked = t.ytPick && t.ytPick.videoId ? t.ytPick : (t.yt && t.yt.picked);
+  if (picked && picked.videoId) {
+    liveToken += 1;
+    state.qIndex = i;
+    audio.dataset.trackId = t.id;
+    loadYT(picked, liveToken);
+    updateNow();
+    prefetchAround(i);
+    return;
+  }
+  startTrack(i, 1);
+}
+function openPick() {
+  const t = state.queue[state.qIndex];
+  if (!t) return;
+  const list = t.ytCandidates || (t.yt && t.yt.candidates) || [];
+  $('#pickTitle').textContent = `選擇「${t.title}」的影片`;
+  $('#pickList').innerHTML = list.length ? list.map((c, i) => `<button type="button" data-i="${i}">${esc(matchLine(c))}${c.weak ? '<span class="ok">較不符</span>' : (videoIdOf(t) === c.videoId ? '<span class="ok">播放中</span>' : '<span class="ok">選擇</span>')}</button>`).join('') : '<div class="sheet-empty">沒有其他候選影片</div>';
+  $('#pickSheet').classList.remove('hidden');
+}
+function closePick() { $('#pickSheet').classList.add('hidden'); }
+$('#pickBackdrop').onclick = closePick;
+$('#pickClose').onclick = closePick;
+$('#ytPickBtn').onclick = () => openPick();
+$('#pickList').addEventListener('click', e => {
+  const b = e.target.closest('button[data-i]');
+  if (!b) return;
+  const t = state.queue[state.qIndex];
+  if (!t) return;
+  const list = t.ytCandidates || [];
+  const c = list[+b.dataset.i];
+  if (!c) return;
+  t.ytPick = { ...c, manual: true };
+  t.ytVideoId = c.videoId;
+  t.ytMiss = false;
+  liveToken += 1;
+  loadYT(t.ytPick, liveToken);
+  updateNow();
+  closePick();
+  if (state.view && state.view.kind === 'custom') saveCustom();
+});
+function setMode(mode) {
+  if (mode === state.mode) {
+    if (mode === 'youtube') armYouTube();
+    return;
+  }
+  state.mode = mode;
+  lsSet('spp.mode', mode);
+  $('#modeAudio').classList.toggle('on', mode !== 'youtube');
+  $('#modeVideo').classList.toggle('on', mode === 'youtube');
+  if (mode === 'audio') {
+    try { if (ytPlayer && ytPlayer.pauseVideo) ytPlayer.pauseVideo(); } catch {}
+    $('#ytDock').classList.add('hidden');
+    document.body.classList.remove('video-mode');
+    if (state.qIndex >= 0 && state.queue[state.qIndex] && state.queue[state.qIndex].preview) startTrack(state.qIndex, 1);
+  } else {
+    audio.pause();
+    armYouTube();
+    if (state.queue.length) startTrack(Math.max(0, state.qIndex), 1);
+    else if (currentViewTracks().length) playList(currentViewTracks(), 0, viewKey());
+  }
+  renderTracks();
+  setTimeout(syncPlayerHeight, 60);
+}
+$('#modeAudio').onclick = () => { unlockAudio(); setMode('audio'); };
+$('#modeVideo').onclick = () => { armYouTube(); setMode('youtube'); };
+ytPoll = setInterval(() => {
+  if (state.mode !== 'youtube' || !ytPlayer || !ytPlayer.getCurrentTime) return;
+  const t = ytPlayer.getCurrentTime() || 0;
+  const d = ytPlayer.getDuration() || 0;
+  if (d > 0) {
+    $('#curTime').textContent = fmt(t);
+    $('#durTime').textContent = fmt(d);
+    $('#progressFill').style.width = Math.min(100, t / d * 100) + '%';
+  }
+}, 500);
+
+/* ---------- 匯出／匯入 ---------- */
+function downloadFile(filename, mime, text) {
+  const blob = new Blob([text], { type: mime });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+}
+function safeName(s) { return String(s || 'playlist').replace(/[^\w\u4e00-\u9fff.-]+/g, '_').slice(0, 40) || 'playlist'; }
+function exportPayload(playlists) {
+  return { app: 'spotify-preview-player', version: 1, exportedAt: new Date().toISOString(), playlists: playlists.map(p => ({ id: p.id, name: p.name, tracks: (p.tracks || []).map(slim) })) };
+}
+function textList(playlists) {
+  return playlists.map(p => {
+    const lines = [p.name];
+    (p.tracks || []).forEach((t, i) => {
+      lines.push(`${i + 1}. ${t.artist || '未知歌手'} - ${t.title}`);
+      if (t.id) lines.push('https://open.spotify.com/track/' + t.id);
+      const yid = videoIdOf(t);
+      if (yid) lines.push('https://www.youtube.com/watch?v=' + yid);
+    });
+    return lines.join('\n');
+  }).join('\n\n');
+}
+function csvOf(playlists) {
+  const rows = [['playlist', 'artist', 'title', 'spotify_url', 'youtube_url', 'duration_ms']];
+  for (const p of playlists) for (const t of p.tracks || []) {
+    const yid = videoIdOf(t);
+    rows.push([p.name, t.artist || '', t.title || '', t.id ? 'https://open.spotify.com/track/' + t.id : '', yid ? 'https://www.youtube.com/watch?v=' + yid : '', t.duration || '']);
+  }
+  const escCell = v => { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  return '\uFEFF' + rows.map(r => r.map(escCell).join(',')).join('\n');
+}
+async function writeClipboard(text) {
+  try { await navigator.clipboard.writeText(text); toast('已複製到剪貼簿'); }
+  catch {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); toast('已複製到剪貼簿'); } catch { toast('無法複製'); }
+    ta.remove();
+  }
+}
+async function copyOrShare(text, title) {
+  if (navigator.share) {
+    try { await navigator.share({ title, text }); return; }
+    catch (err) { if (err && err.name === 'AbortError') return; }
+  }
+  await writeClipboard(text);
+}
+function currentCustom() {
+  if (!state.view || state.view.kind !== 'custom') return null;
+  return state.custom.find(p => p.id === state.view.id) || null;
+}
+async function matchPlaylist(pl, onProgress) {
+  const pending = pl.tracks.filter(t => !t.yt && !videoIdOf(t));
+  for (let i = 0; i < pending.length; i += 12) {
+    const slice = pending.slice(i, i + 12);
+    const r = await fetch('/api/youtube', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tracks: slice.map(t => ({ id: t.id, artist: t.artist, title: t.title, duration: t.duration })) }) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || '配對失敗');
+    for (const res of data.results || []) {
+      const t = pl.tracks.find(x => x.id && x.id === res.id) || slice[data.results.indexOf(res)];
+      if (t) applyMatch(t, res);
+    }
+    if (onProgress) onProgress(Math.min(pl.tracks.length, i + slice.length), pl.tracks.length);
+  }
+  saveCustom();
+}
+function closeYouTubeExport() { $('#ytExportSheet').classList.add('hidden'); }
+function renderYouTubeExport(pl) {
+  const ids = [];
+  const links = [];
+  let skipped = 0;
+  for (const t of pl.tracks) {
+    const id = videoIdOf(t);
+    if (!id) { skipped++; continue; }
+    ids.push(id);
+    links.push({ title: `${t.artist || ''} - ${t.title}`.trim(), url: 'https://www.youtube.com/watch?v=' + id });
+  }
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += 50) chunks.push(ids.slice(i, i + 50));
+  const note = ids.length
+    ? `已配對 ${ids.length} 首${skipped ? `，${skipped} 首沒有合適的影片已略過` : ''}。YouTube 這個網址一次最多約 50 首${chunks.length > 1 ? `，所以分成 ${chunks.length} 段` : ''}。`
+    : '這些歌都找不到合適的 YouTube 影片。';
+  const chunkBtns = chunks.map((c, i) => {
+    const from = i * 50 + 1;
+    const to = i * 50 + c.length;
+    const href = 'https://www.youtube.com/watch_videos?video_ids=' + c.join(',');
+    return `<a class="btn primary" target="_blank" rel="noopener" href="${esc(href)}">開啟 YouTube 歌單${chunks.length > 1 ? ` ${from}–${to}` : ''}（${c.length} 首）</a>`;
+  }).join('');
+  $('#ytExportBody').innerHTML = `<p class="sheet-note">${esc(note)}</p>${chunkBtns}<textarea class="yt-links" readonly id="ytLinkBox">${esc(links.map(l => l.title + '\n' + l.url).join('\n'))}</textarea><button type="button" id="copyYtLinks" class="btn ghost">複製 YouTube 連結</button>`;
+  const copy = $('#copyYtLinks');
+  if (copy) copy.onclick = () => writeClipboard($('#ytLinkBox').value);
+}
+async function openYouTubeExport(pl) {
+  if (!pl || !pl.tracks.length) { toast('這個歌單還沒有歌曲'); return; }
+  $('#ytExportTitle').textContent = `YouTube · ${pl.name}`;
+  $('#ytExportBody').innerHTML = `<p class="sheet-note">正在配對影片… 0/${pl.tracks.length}</p>`;
+  $('#ytExportSheet').classList.remove('hidden');
+  try {
+    await matchPlaylist(pl, (done, total) => {
+      const note = $('#ytExportBody .sheet-note');
+      if (note) note.textContent = `正在配對影片… ${done}/${total}`;
+    });
+  } catch (err) {
+    $('#ytExportBody').innerHTML = `<p class="sheet-note">${esc(err.message || '配對失敗')}</p>`;
+    return;
+  }
+  renderYouTubeExport(pl);
+}
+function closeShare() { $('#shareSheet').classList.add('hidden'); }
+function openShare() {
+  const pl = currentCustom();
+  if (!pl) return;
+  $('#shareTitle').textContent = `匯出「${pl.name}」`;
+  $('#shareActions').innerHTML = [
+    ['json-one', '下載這個歌單 JSON'],
+    ['json-all', '下載全部歌單 JSON'],
+    ['csv', '下載 CSV'],
+    ['copy', '複製歌曲清單'],
+    ['share', '分享歌曲清單'],
+    ['yt', '做成 YouTube 歌單'],
+    ['import', '匯入 JSON'],
+  ].map(([k, label]) => `<button type="button" data-act="${k}">${label}</button>`).join('');
+  $('#shareSheet').classList.remove('hidden');
+}
+function importData(data) {
+  const lists = Array.isArray(data) ? data : (data && data.playlists) ? data.playlists : (data && data.name && data.tracks) ? [data] : null;
+  if (!lists) throw new Error('這不是這個播放器的歌單檔');
+  let n = 0;
+  for (const raw of lists.slice(0, 50)) {
+    if (!raw || !Array.isArray(raw.tracks)) continue;
+    const tracks = raw.tracks.map(t => {
+      if (!t || !t.title) return null;
+      const id = String(t.id || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 32);
+      const item = { id: id || uid(), title: String(t.title).slice(0, 200), artist: String(t.artist || '').slice(0, 200), duration: Number(t.duration) || 0, preview: t.preview || null, cover: t.cover || null, video: t.video || null, videoThumb: t.videoThumb || null, ytVideoId: t.ytVideoId || null };
+      if (item.ytVideoId) item.ytPick = { videoId: item.ytVideoId, title: item.title, channel: '', kind: 'picked', url: 'https://www.youtube.com/watch?v=' + item.ytVideoId };
+      return item;
+    }).filter(Boolean).slice(0, 500);
+    const name = String(raw.name || '匯入的歌單').slice(0, 80);
+    const existing = raw.id && state.custom.find(p => p.id === raw.id);
+    if (existing) { existing.name = name; existing.tracks = tracks; }
+    else state.custom.push({ id: raw.id || uid(), name, tracks });
+    n++;
+  }
+  if (!n) throw new Error('檔案裡沒有歌單');
+  saveCustom();
+  return n;
+}
+$('#shareActions').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-act]');
+  if (!b) return;
+  const pl = currentCustom();
+  const act = b.dataset.act;
+  if (act === 'import') { $('#importFile').click(); return; }
+  if (act === 'yt') { closeShare(); if (pl) openYouTubeExport(pl); return; }
+  if (!pl && act !== 'json-all') return;
+  if (act === 'json-one') downloadFile(safeName(pl.name) + '.json', 'application/json', JSON.stringify(exportPayload([pl]), null, 2));
+  if (act === 'json-all') downloadFile('spotify-playlists.json', 'application/json', JSON.stringify(exportPayload(state.custom), null, 2));
+  if (act === 'csv') downloadFile(safeName(pl.name) + '.csv', 'text/csv;charset=utf-8', csvOf([pl]));
+  if (act === 'copy') writeClipboard(textList([pl]));
+  if (act === 'share') copyOrShare(textList([pl]), pl.name);
+  if (act !== 'share' && act !== 'copy') toast('已開始下載');
+});
+$('#shareBackdrop').onclick = closeShare;
+$('#shareClose').onclick = closeShare;
+$('#ytExportBackdrop').onclick = closeYouTubeExport;
+$('#ytExportClose').onclick = closeYouTubeExport;
+$('#exportBtn').onclick = () => openShare();
+$('#ytExportBtn').onclick = () => { const pl = currentCustom(); if (pl) openYouTubeExport(pl); };
+$('#importBtn').onclick = () => $('#importFile').click();
+$('#importFile').addEventListener('change', async () => {
+  const file = $('#importFile').files && $('#importFile').files[0];
+  $('#importFile').value = '';
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    const n = importData(data);
+    toast(`已匯入 ${n} 個歌單`);
+    if (state.custom.length) showView({ kind: 'custom', id: state.custom[state.custom.length - 1].id });
+  } catch (err) { toast(err.message || '匯入失敗'); }
+});
+
+$('#loadForm').addEventListener('submit', e => { e.preventDefault(); if (state.mode === 'youtube') armYouTube(); else unlockAudio(); const u = $('#urlInput').value.trim(); if (u) loadPlaylist(u); else toast('請先貼上 Spotify 歌單網址'); });
 $('#demoBtn').onclick = () => { $('#urlInput').value = 'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M'; loadPlaylist($('#urlInput').value); };
 
 const qp = new URLSearchParams(location.search).get('url');

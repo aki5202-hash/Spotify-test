@@ -32,6 +32,10 @@ PORT=3000 node server.js  # 自訂埠號
 - `GET /api/playlist?url=<Spotify 網址或 ID>` → `{ name, owner, cover, tracks:[{id,title,artist,duration,preview,cover,video,videoThumb}], limited }`
 - `GET /api/track/<trackId>` → `{ id, title, artist, duration, preview, cover, video, videoThumb }`
 - `video` 只會在公開嵌入頁的 `videoPreview` 有網址時出現（不使用登入憑證）。Canvas / Clips 的 `canvaz.scdn.co` 影片不在這個公開資料裡。
+- `GET /api/youtube?artist=&title=&duration=` → 比對公開 YouTube 搜尋結果後的 `{ picked, candidates, skipped }`（伺服器會快取，不使用 API 金鑰）
+- `POST /api/youtube` body `{ tracks:[{id,artist,title,duration}] }`（一次最多 30 首）→ `{ results:[...] }`
+
+播放列可在「試聽」與「YouTube」之間切換。YouTube 模式用 IFrame Player API（`playsinline=1`）播放配對到的官方影片，播完自動下一首。自訂歌單可匯出 JSON / CSV / 文字清單，並用「在 YouTube 開啟」把已配對的影片組成 `watch_videos` 歌單（每段最多 50 首）。
 
 ### 端到端測試（選用，需要 Google Chrome）
 ```bash

@@ -2,6 +2,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { matchYouTube, matchMany } = require('./youtube');
 
 const PORT = process.env.PORT || 8787;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
@@ -103,6 +104,20 @@ function send(res, code, obj) {
   res.end(JSON.stringify(obj));
 }
 
+function readBody(req, limit = 1_000_000) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let n = 0;
+    req.on('data', c => {
+      n += c.length;
+      if (n > limit) { reject(new Error('內容過大')); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
 http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
   try {
@@ -113,6 +128,21 @@ http.createServer(async (req, res) => {
     }
     let m = u.pathname.match(/^\/api\/track\/([A-Za-z0-9]{22})$/);
     if (m) return send(res, 200, await getTrack(m[1]));
+    if (u.pathname === '/api/youtube' && req.method === 'GET') {
+      const title = u.searchParams.get('title') || '';
+      if (!title.trim()) return send(res, 400, { error: '缺少歌名' });
+      return send(res, 200, await matchYouTube({
+        artist: u.searchParams.get('artist') || '',
+        title,
+        duration: Number(u.searchParams.get('duration')) || 0,
+      }));
+    }
+    if (u.pathname === '/api/youtube' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req) || '{}');
+      const tracks = Array.isArray(body.tracks) ? body.tracks.slice(0, 30) : [];
+      if (!tracks.length) return send(res, 400, { error: '缺少歌曲' });
+      return send(res, 200, { results: await matchMany(tracks, 3) });
+    }
     if (u.pathname === '/api/health') return send(res, 200, { ok: true });
     let f = u.pathname === '/' ? '/index.html' : u.pathname;
     const fp = path.join(__dirname, 'public', path.normalize(f).replace(/^(\.\.[\/\\])+/, ''));
