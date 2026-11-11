@@ -58,30 +58,73 @@ function annotationFrom(referent) {
   return { fragment, text, votes };
 }
 
+function readToken() {
+  let token = String(process.env.GENIUS_ACCESS_TOKEN || '').trim();
+  if (/^bearer\s+/i.test(token)) token = token.replace(/^bearer\s+/i, '').trim();
+  return token;
+}
+
+function redact(text, token) {
+  let s = String(text || '').replace(/\s+/g, ' ').trim();
+  if (token) s = s.split(token).join('[redacted]');
+  s = s.replace(/bearer\s+\S+/gi, 'Bearer [redacted]');
+  return s.slice(0, 120);
+}
+
+function geniusDiagnostic(status, contentType, raw, token, cfMitigated) {
+  const head = String(raw || '').slice(0, 2000);
+  const cloudflare = /challenge/i.test(cfMitigated || '') || /just a moment|cf-browser|cloudflare|recaptcha|make sure you're a human/i.test(head);
+  return {
+    status,
+    contentType: contentType || '',
+    cloudflare,
+    body: redact(raw, token),
+  };
+}
+
+function logGenius(path, diag) {
+  const where = String(path || '').split('?')[0];
+  console.warn('genius', where, JSON.stringify(diag));
+}
+
 async function geniusFetch(path, token) {
   const r = await fetch(GENIUS_API + path, {
     headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
     signal: AbortSignal.timeout(15000),
   });
+  const contentType = r.headers.get('content-type') || '';
+  const raw = await r.text();
+  const diag = geniusDiagnostic(r.status, contentType, raw, token, r.headers.get('cf-mitigated'));
+  if (!r.ok) logGenius(path, diag);
   if (!r.ok) {
-    const err = new Error(r.status === 401 ? 'Genius 權杖被拒絕' : 'Genius 回應 ' + r.status);
+    const err = new Error(r.status === 401 ? 'Genius 權杖無法使用，目前只顯示 LRCLIB 歌詞。' : 'Genius 註解暫時讀不到，目前只顯示 LRCLIB 歌詞。');
     err.status = r.status;
+    err.geniusStatus = diag;
     throw err;
   }
-  return r.json();
+  try {
+    return { json: JSON.parse(raw), geniusStatus: diag };
+  } catch {
+    const err = new Error('Genius 回應不是 JSON');
+    err.status = r.status;
+    err.geniusStatus = diag;
+    logGenius(path, diag);
+    throw err;
+  }
 }
 
 async function geniusBundle(artist, title, token) {
   const q = encodeURIComponent([artist, cleanTitle(title)].filter(Boolean).join(' '));
   const search = await geniusFetch('/search?q=' + q, token);
-  const hit = pickGeniusHit((search.response && search.response.hits) || [], artist, title);
-  if (!hit) return null;
+  const searchJson = search.json;
+  const hit = pickGeniusHit((searchJson.response && searchJson.response.hits) || [], artist, title);
+  if (!hit) return { geniusStatus: search.geniusStatus, bundle: null };
   const songRes = await geniusFetch('/songs/' + hit.id + '?text_format=plain', token);
-  const song = (songRes.response && songRes.response.song) || hit;
+  const song = (songRes.json.response && songRes.json.response.song) || hit;
   const annotations = [];
   for (let page = 1; page <= 10; page++) {
     const ref = await geniusFetch('/referents?song_id=' + hit.id + '&text_format=plain&per_page=50&page=' + page, token);
-    const list = (ref.response && ref.response.referents) || [];
+    const list = (ref.json.response && ref.json.response.referents) || [];
     for (const item of list) {
       const ann = annotationFrom(item);
       if (ann) annotations.push(ann);
@@ -91,12 +134,15 @@ async function geniusBundle(artist, title, token) {
   const description = plainOf(song.description) || String(song.description_preview || '').trim();
   const art = song.song_art_image_thumbnail_url || song.song_art_image_url || song.header_image_thumbnail_url || song.header_image_url || '';
   return {
-    title: song.title || hit.title || title,
-    artist: (song.primary_artist && song.primary_artist.name) || (hit.primary_artist && hit.primary_artist.name) || artist,
-    url: song.url || hit.url || '',
-    description,
-    art,
-    annotations,
+    geniusStatus: search.geniusStatus,
+    bundle: {
+      title: song.title || hit.title || title,
+      artist: (song.primary_artist && song.primary_artist.name) || (hit.primary_artist && hit.primary_artist.name) || artist,
+      url: song.url || hit.url || '',
+      description,
+      art,
+      annotations,
+    },
   };
 }
 
@@ -137,7 +183,7 @@ async function fetchLyrics({ artist = '', title = '' } = {}) {
     err.status = 400;
     throw err;
   }
-  const token = process.env.GENIUS_ACCESS_TOKEN || '';
+  const token = readToken();
   const key = norm(artist) + '|' + norm(cleanTitle(title)) + '|' + (token ? 'g' : 'l');
   const cached = cache.get(key);
   if (cached && Date.now() - cached.t < CACHE_TTL) return cached.data;
@@ -149,11 +195,14 @@ async function fetchLyrics({ artist = '', title = '' } = {}) {
   let song = emptySong(title, artist);
   let annotations = [];
   let note = '';
+  let geniusStatus = null;
   if (!token) {
     note = '註解需要設定 GENIUS_ACCESS_TOKEN。目前只顯示 LRCLIB 歌詞。';
   } else {
     try {
-      const bundle = await geniusBundle(artist, title, token);
+      const result = await geniusBundle(artist, title, token);
+      geniusStatus = result && result.geniusStatus;
+      const bundle = result && result.bundle;
       if (bundle) {
         song = {
           title: bundle.title,
@@ -165,6 +214,7 @@ async function fetchLyrics({ artist = '', title = '' } = {}) {
         annotations = bundle.annotations;
       } else note = 'Genius 上找不到相符的歌，目前只顯示 LRCLIB 歌詞。';
     } catch (err) {
+      geniusStatus = err.geniusStatus || null;
       note = err.status === 401
         ? 'Genius 權杖無法使用，目前只顯示 LRCLIB 歌詞。'
         : 'Genius 註解暫時讀不到，目前只顯示 LRCLIB 歌詞。';
@@ -175,9 +225,9 @@ async function fetchLyrics({ artist = '', title = '' } = {}) {
     err.status = 404;
     throw err;
   }
-  const data = { song, lyrics, annotations, note };
+  const data = { song, lyrics, annotations, note, geniusStatus };
   cache.set(key, { t: Date.now(), data });
   return data;
 }
 
-module.exports = { fetchLyrics, pickGeniusHit, scoreHit, cleanTitle, annotationFrom };
+module.exports = { fetchLyrics, pickGeniusHit, scoreHit, cleanTitle, annotationFrom, readToken, redact, geniusDiagnostic };
