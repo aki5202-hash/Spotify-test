@@ -184,6 +184,23 @@ function scoreVideo(v, artist, title, durationMs) {
   };
 }
 
+async function canEmbed(videoId) {
+  const key = 'embed:' + videoId;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.t < CACHE_TTL) return hit.data;
+  let ok = true;
+  try {
+    const url = 'https://www.youtube.com/oembed?url=' + encodeURIComponent('https://www.youtube.com/watch?v=' + videoId) + '&format=json';
+    const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000) });
+    if (r.status === 401 || r.status === 403) ok = false;
+    else ok = true;
+  } catch {
+    ok = true;
+  }
+  cache.set(key, { t: Date.now(), data: ok });
+  return ok;
+}
+
 function dedupeSort(list) {
   const map = new Map();
   for (const item of list) {
@@ -224,12 +241,17 @@ async function matchYouTube({ artist = '', title = '', duration = 0 } = {}) {
       picked = ranked.find(v => !v.reject);
       query = q1 + ' || ' + q2;
     }
-    const candidates = ranked.slice(0, 6).map(({ reject, ...rest }) => ({ ...rest, weak: !!reject }));
+    const pool = ranked.slice(0, 8);
+    await Promise.all(pool.map(async v => { v.embeddable = await canEmbed(v.videoId); }));
+    const embeddablePick = pool.find(v => v.embeddable && !v.reject) || pool.find(v => v.embeddable);
+    if (embeddablePick) picked = embeddablePick;
+    else if (picked && picked.embeddable === false) picked = null;
+    const candidates = pool.slice(0, 6).map(({ reject, ...rest }) => ({ ...rest, weak: !!reject || rest.embeddable === false }));
     const data = {
       query,
-      picked: picked ? (({ reject, ...rest }) => rest)(picked) : null,
+      picked: picked && picked.embeddable !== false ? (({ reject, ...rest }) => rest)(picked) : null,
       candidates,
-      skipped: !picked,
+      skipped: !(picked && picked.embeddable !== false),
     };
     cache.set(key, { t: Date.now(), data });
     if (process.env.YT_CACHE_FILE) {

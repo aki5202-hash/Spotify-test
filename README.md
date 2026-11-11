@@ -35,7 +35,7 @@ PORT=3000 node server.js  # 自訂埠號
 - `GET /api/youtube?artist=&title=&duration=` → 比對公開 YouTube 搜尋結果後的 `{ picked, candidates, skipped }`（伺服器會快取，不使用 API 金鑰）
 - `POST /api/youtube` body `{ tracks:[{id,artist,title,duration}] }`（一次最多 30 首）→ `{ results:[...] }`
 
-播放列可在「試聽」與「YouTube」之間切換。YouTube 模式用 IFrame Player API（`playsinline=1`）播放配對到的官方影片，播完自動下一首。自訂歌單可匯出 JSON / CSV / 文字清單，並用「在 YouTube 開啟」把已配對的影片組成 `watch_videos` 歌單（每段最多 50 首）。
+播放列可在「試聽」與「YouTube」之間切換。YouTube 模式會放上標準的 `youtube-nocookie.com/embed` 播放器（`playsinline=1`），第一首由使用者點播放器上的播放鍵；之後用同一個播放器在影片結束時自動換下一首。配對時會用 oEmbed 確認影片允許內嵌。自訂歌單可匯出 JSON / CSV / 文字清單，並用「在 YouTube 開啟」把已配對的影片組成 `watch_videos` 歌單（每段最多 50 首）。
 
 ### 端到端測試（選用，需要 Google Chrome）
 ```bash

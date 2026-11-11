@@ -154,7 +154,7 @@ function applyDetails(id, d) {
     if (!title.querySelector('.badge.clip')) title.insertAdjacentHTML('beforeend', '<span class="badge clip">短片</span>');
   });
   const cur = state.queue[state.qIndex];
-  if (cur && cur.id === id) showVisual(cur);
+  if (cur && cur.id === id) { showVisual(cur); publishMediaSession(cur); }
   if (changed && state.custom.some(p => p.tracks.some(t => t.id === id))) lsSet(LS_KEY, JSON.stringify(state.custom));
 }
 
@@ -208,6 +208,8 @@ function showView(view) {
   $('#deleteBtn').classList.toggle('hidden', !isCustom);
   $('#exportBtn').classList.toggle('hidden', !isCustom);
   $('#ytExportBtn').classList.toggle('hidden', !isCustom);
+  $('#setDefaultBtn').classList.toggle('hidden', !isCustom);
+  if (isCustom) $('#setDefaultBtn').textContent = pl.id === lsGet('spp.defaultPl') ? '目前是預設歌單' : '設為預設歌單';
   const os = $('#openSpotify');
   os.classList.toggle('hidden', isCustom);
   if (!isCustom) os.href = `https://open.spotify.com/${pl.type || 'playlist'}/${pl.id}`;
@@ -250,12 +252,15 @@ function renderSidebar() {
     src.className = 'side-item' + (state.view?.kind === 'source' ? ' active' : '') + (state.queueKey === 'source' ? ' playing' : '');
     src.innerHTML = `<span class="thumb">${s.cover ? `<img src="${esc(s.cover)}" alt="">` : '🎵'}</span><span class="nm">${esc(s.name)}</span><span class="cnt">${s.tracks.length}</span>`;
   }
+  const defId = lsGet('spp.defaultPl');
   $('#customList').innerHTML = state.custom.length ? state.custom.map(p => {
     const c = p.tracks.find(t => t.cover)?.cover;
     const active = state.view?.kind === 'custom' && state.view.id === p.id;
     const playing = (state.queueKey || '').split(':shuffle')[0] === 'custom:' + p.id;
+    const isDef = p.id === defId;
     return `<div class="side-item ${active ? 'active' : ''} ${playing ? 'playing' : ''}" data-pl="${p.id}">
-      <span class="thumb">${c ? `<img src="${esc(c)}" alt="">` : '♥'}</span><span class="nm">${esc(p.name)}</span><span class="cnt">${p.tracks.length}</span></div>`;
+      <span class="thumb">${c ? `<img src="${esc(c)}" alt="">` : '♥'}</span><span class="nm">${esc(p.name)}</span><span class="cnt">${p.tracks.length}</span>
+      <button type="button" class="def-btn ${isDef ? 'on' : ''}" data-def="${p.id}">${isDef ? '預設' : '設預設'}</button></div>`;
   }).join('') : '<div class="side-item disabled">按 ＋ 建立第一個歌單</div>';
 }
 
@@ -345,13 +350,47 @@ function updateNow() {
   $('#nowArtist').textContent = t ? t.artist : '';
   showVisual(t);
   $('#nowAddBtn').disabled = !t;
+  updateHeart();
   document.title = t ? `▶ ${t.title} - ${t.artist}` : 'Spotify 試聽播放器';
-  if ('mediaSession' in navigator && t) {
-    try {
-      navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: t.artist, artwork: t.cover ? [{ src: t.cover, sizes: '300x300' }] : [] });
-    } catch {}
-  }
+  publishMediaSession(t);
   renderTracks(); renderSidebar(); updatePlayBtn();
+}
+function nowAlbum() {
+  const key = state.queueKey || '';
+  if (key.startsWith('custom:')) {
+    const pl = state.custom.find(p => p.id === key.split(':')[1]);
+    return (pl && pl.name) || '';
+  }
+  return (state.source && state.source.name) || '';
+}
+function publishMediaSession(t) {
+  if (!('mediaSession' in navigator)) return;
+  try {
+    if (!t) { navigator.mediaSession.metadata = null; return; }
+    const art = t.cover ? [96, 128, 192, 256, 384, 512].map(size => ({ src: t.cover, sizes: `${size}x${size}`, type: 'image/jpeg' })) : [];
+    navigator.mediaSession.metadata = new MediaMetadata({ title: t.title || '', artist: t.artist || '', album: nowAlbum(), artwork: art });
+  } catch {}
+  updatePositionState();
+}
+function updatePositionState() {
+  if (!('mediaSession' in navigator) || !navigator.mediaSession.setPositionState) return;
+  if (state.mode === 'youtube') return;
+  const d = audio.duration;
+  if (!isFinite(d) || d <= 0) return;
+  try {
+    navigator.mediaSession.setPositionState({ duration: d, playbackRate: audio.playbackRate || 1, position: Math.min(d, Math.max(0, audio.currentTime || 0)) });
+  } catch {}
+}
+function updateHeart() {
+  const btn = $('#heartBtn');
+  if (!btn) return;
+  const t = state.queue[state.qIndex];
+  btn.disabled = !t;
+  const on = !!(t && inDefault(t));
+  btn.textContent = on ? '♥' : '♡';
+  btn.classList.toggle('on', on);
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  btn.title = on ? '從預設歌單移除' : '加入預設歌單';
 }
 function ytPlaying() {
   if (!ytPlayer || !ytPlayer.getPlayerState || !window.YT) return false;
@@ -362,6 +401,10 @@ function updatePlayBtn() {
   const paused = state.mode === 'youtube' ? !ytPlaying() : audio.paused;
   $('#playBtn').textContent = paused ? '▶' : '⏸';
   document.querySelectorAll('.track').forEach(li => li.classList.toggle('paused', paused));
+  if ('mediaSession' in navigator) {
+    try { navigator.mediaSession.playbackState = paused ? 'paused' : 'playing'; } catch {}
+  }
+  updatePositionState();
 }
 function togglePlay() {
   if (state.mode === 'youtube') {
@@ -429,6 +472,7 @@ audio.addEventListener('timeupdate', () => {
   $('#curTime').textContent = fmt(t);
   $('#durTime').textContent = fmt(d);
   $('#progressFill').style.width = Math.min(100, t / d * 100) + '%';
+  updatePositionState();
 });
 $('#progress').addEventListener('pointerdown', markUserSeek);
 $('#progress').addEventListener('click', e => {
@@ -448,12 +492,20 @@ $('#volume').addEventListener('input', e => {
   try { if (ytPlayer && ytPlayer.setVolume) ytPlayer.setVolume(Math.round((+e.target.value) * 100)); } catch {}
 });
 audio.volume = +(lsGet('spp.vol') || 0.8); $('#volume').value = audio.volume;
-$('#playBtn').onclick = togglePlay; $('#nextBtn').onclick = next; $('#prevBtn').onclick = prev;
+$('#playBtn').onclick = togglePlay; $('#nextBtn').onclick = next; $('#prevBtn').onclick = prev; $('#heartBtn').onclick = heartToggle;
 if ('mediaSession' in navigator) {
-  try {
-    navigator.mediaSession.setActionHandler('nexttrack', next);
-    navigator.mediaSession.setActionHandler('previoustrack', prev);
-  } catch {}
+  const setHandler = (name, fn) => { try { navigator.mediaSession.setActionHandler(name, fn); } catch {} };
+  setHandler('play', () => { if (state.mode === 'youtube') { try { ytPlayer && ytPlayer.playVideo && ytPlayer.playVideo(); } catch {} } else { unlockAudio(); const p = audio.play(); if (p) p.catch(() => {}); } });
+  setHandler('pause', () => { if (state.mode === 'youtube') { try { ytPlayer && ytPlayer.pauseVideo && ytPlayer.pauseVideo(); } catch {} } else audio.pause(); });
+  setHandler('nexttrack', () => next());
+  setHandler('previoustrack', () => mediaPrevious());
+  setHandler('seekto', details => {
+    if (!details || details.seekTime == null || state.mode === 'youtube') return;
+    markUserSeek();
+    const d = audio.duration;
+    if (isFinite(d) && d > 0) audio.currentTime = Math.max(0, Math.min(d, details.seekTime));
+    updatePositionState();
+  });
 }
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
@@ -493,6 +545,62 @@ $('#modalCancel').onclick = () => closeModal(null);
 $('#modalBackdrop').onclick = () => closeModal(null);
 
 /* ---------- 自訂歌單 ---------- */
+function defaultPlaylist() {
+  const id = lsGet('spp.defaultPl');
+  return (id && state.custom.find(p => p.id === id)) || null;
+}
+function ensureDefault() {
+  let pl = defaultPlaylist();
+  if (pl) return pl;
+  pl = state.custom.find(p => p.name === '我的最愛');
+  if (!pl) pl = createPlaylist('我的最愛');
+  if (pl) { lsSet('spp.defaultPl', pl.id); renderSidebar(); }
+  return pl;
+}
+function inDefault(track) {
+  const pl = defaultPlaylist();
+  return !!(track && pl && pl.tracks.some(t => t.id === track.id));
+}
+function setDefaultPlaylist(id) {
+  const pl = state.custom.find(p => p.id === id);
+  if (!pl) return;
+  lsSet('spp.defaultPl', id);
+  renderSidebar();
+  if (state.view && state.view.kind === 'custom') showView(state.view);
+  updateHeart();
+  toast(`預設歌單：${pl.name}`);
+}
+function heartToggle() {
+  const t = state.queue[state.qIndex];
+  if (!t) return;
+  const pl = ensureDefault();
+  if (!pl) return;
+  const idx = pl.tracks.findIndex(x => x.id === t.id);
+  if (idx >= 0) {
+    pl.tracks.splice(idx, 1);
+    saveCustom();
+    if (state.view && state.view.kind === 'custom' && state.view.id === pl.id) showView(state.view);
+    toast(`已從「${pl.name}」移除`);
+  } else addToPlaylist(pl, t);
+  updateHeart();
+}
+function addCurrentToDefault() {
+  const t = state.queue[state.qIndex];
+  if (!t) return;
+  const pl = ensureDefault();
+  if (!pl) return;
+  if (pl.tracks.some(x => x.id === t.id)) toast(`「${t.title}」已在「${pl.name}」`);
+  else addToPlaylist(pl, t);
+  updateHeart();
+}
+function mediaPrevious() {
+  if ($('#lockPrevAdd') && $('#lockPrevAdd').checked) {
+    addCurrentToDefault();
+    next();
+    return;
+  }
+  prev();
+}
 function createPlaylist(name) {
   name = (name || '').trim();
   if (!name) return null;
@@ -583,7 +691,16 @@ $('#newPlBtn').onclick = async () => {
   if (p) showView({ kind: 'custom', id: p.id });
 };
 $('#sourceItem').onclick = () => { if (state.source) showView({ kind: 'source' }); };
-$('#customList').addEventListener('click', e => { const it = e.target.closest('[data-pl]'); if (it) showView({ kind: 'custom', id: it.dataset.pl }); });
+$('#customList').addEventListener('click', e => {
+  const def = e.target.closest('[data-def]');
+  if (def) { setDefaultPlaylist(def.dataset.def); return; }
+  const it = e.target.closest('[data-pl]');
+  if (it) showView({ kind: 'custom', id: it.dataset.pl });
+});
+$('#setDefaultBtn').onclick = () => {
+  const pl = state.view && state.view.kind === 'custom' && state.custom.find(p => p.id === state.view.id);
+  if (pl) setDefaultPlaylist(pl.id);
+};
 $('#renameBtn').onclick = async () => {
   const pl = state.custom.find(p => p.id === state.view.id);
   if (!pl) return;
@@ -600,6 +717,7 @@ $('#deleteBtn').onclick = async () => {
   const ok = await openModal({ title: '刪除歌單', text: `確定要刪除「${pl.name}」嗎？`, confirmText: '刪除', danger: true });
   if (!ok) return;
   state.custom = state.custom.filter(p => p.id !== pl.id);
+  if (lsGet('spp.defaultPl') === pl.id) lsSet('spp.defaultPl', '');
   saveCustom();
   toast('已刪除歌單');
   if (state.source) showView({ kind: 'source' });
@@ -636,37 +754,45 @@ function showDock() {
   document.body.classList.add('video-mode');
   setTimeout(syncPlayerHeight, 40);
 }
+function embedSrc(videoId) {
+  const q = new URLSearchParams({
+    playsinline: '1',
+    enablejsapi: '1',
+    rel: '0',
+    modestbranding: '1',
+    origin: location.origin,
+  });
+  return 'https://www.youtube.com/embed/' + videoId + '?' + q.toString();
+}
 function armYouTube() {
   showDock();
-  if (window.YT && YT.Player) createYT();
+  const frame = $('#ytEmbed');
+  const box = frame && frame.parentElement && frame.parentElement.getBoundingClientRect();
+  if (box && box.height < 40) syncPlayerHeight();
 }
-function createYT() {
-  if (ytPlayer || ytCreating || !window.YT || !YT.Player || !$('#ytMount')) return;
+function ensureAPI() {
+  const frame = $('#ytEmbed');
+  if (!frame || !frame.dataset.vid || ytPlayer || ytCreating) return;
+  if (!(window.YT && YT.Player)) return;
   ytCreating = true;
-  ytPlayer = new YT.Player('ytMount', {
-    width: '100%',
-    height: '100%',
-    playerVars: { playsinline: 1, rel: 0, modestbranding: 1, autoplay: 1, origin: location.origin, enablejsapi: 1 },
+  ytPlayer = new YT.Player('ytEmbed', {
     events: {
       onReady() {
         ytReady = true;
         ytCreating = false;
+        frame.dataset.api = '1';
         try { ytPlayer.setVolume(Math.round(audio.volume * 100)); } catch {}
-        if (pendingVideo && pendingVideo.token === liveToken) {
-          const p = pendingVideo;
-          pendingVideo = null;
-          try { ytPlayer.loadVideoById({ videoId: p.videoId }); } catch {}
-        }
         syncPlayerHeight();
       },
       onStateChange(e) {
         updatePlayBtn();
+        if (e.data === YT.PlayerState.PLAYING) frame.dataset.started = '1';
         if (e.data === YT.PlayerState.ENDED && state.mode === 'youtube' && $('#autoNext').checked) advanceYouTube();
       },
-      onError() {
-        if (state.mode !== 'youtube') return;
-        toast('這部影片無法播放，跳到下一首');
-        if ($('#autoNext').checked) advance(1);
+      onError(e) {
+        const code = e && e.data;
+        console.warn('yt-error', code);
+        if (code === 101 || code === 150) handleYTError(code);
       },
     },
   });
@@ -674,17 +800,61 @@ function createYT() {
 const prevYTReady = window.onYouTubeIframeAPIReady;
 window.onYouTubeIframeAPIReady = function () {
   if (typeof prevYTReady === 'function') prevYTReady();
-  if (pendingVideo) createYT();
+  ensureAPI();
 };
-function loadYT(picked, token) {
+function loadYT(picked, token, opts) {
   if (!picked || !picked.videoId) return;
-  pendingVideo = { videoId: picked.videoId, token };
+  const autoplay = !!(opts && opts.autoplay);
+  pendingVideo = { videoId: picked.videoId, token, autoplay };
   showDock();
   setMatchLabel(matchLine(picked));
-  if (ytReady && ytPlayer && ytPlayer.loadVideoById) {
-    try { ytPlayer.loadVideoById({ videoId: picked.videoId }); } catch {}
-    pendingVideo = null;
-  } else armYouTube();
+  const frame = $('#ytEmbed');
+  const waiting = $('#ytWaiting');
+  if (waiting) waiting.classList.add('hidden');
+  frame.classList.remove('hidden');
+  if (ytReady && ytPlayer && frame.dataset.api === '1' && ytPlayer.loadVideoById) {
+    frame.dataset.vid = picked.videoId;
+    try {
+      if (autoplay) ytPlayer.loadVideoById(picked.videoId);
+      else ytPlayer.cueVideoById(picked.videoId);
+    } catch {}
+    return;
+  }
+  // Standard embed is visible and tappable before the IFrame API finishes loading.
+  if (frame.dataset.vid !== picked.videoId) {
+    frame.dataset.vid = picked.videoId;
+    frame.src = embedSrc(picked.videoId);
+  }
+  ensureAPI();
+  syncPlayerHeight();
+}
+let ytErrorBusy = false;
+function handleYTError(code) {
+  if (state.mode !== 'youtube' || ytErrorBusy) return;
+  ytErrorBusy = true;
+  setTimeout(() => { ytErrorBusy = false; }, 700);
+  const t = state.queue[state.qIndex];
+  if (!t) return;
+  const bad = new Set(t.ytBad || []);
+  const current = (t.ytPick && t.ytPick.videoId) || t.ytVideoId;
+  if (current) bad.add(current);
+  t.ytBad = [...bad];
+  const list = t.ytCandidates || (t.yt && t.yt.candidates) || [];
+  const next = list.find(c => c && c.videoId && !bad.has(c.videoId) && c.embeddable !== false && !c.weak)
+    || list.find(c => c && c.videoId && !bad.has(c.videoId) && c.embeddable !== false);
+  if (next) {
+    t.ytPick = { ...next, manual: true };
+    t.ytVideoId = next.videoId;
+    t.ytMiss = false;
+    toast(code === 101 || code === 150 ? '這部影片不允許內嵌，改播候選影片' : '這部影片無法播放，改播候選影片');
+    loadYT(t.ytPick, liveToken, { autoplay: true });
+    updateNow();
+    return;
+  }
+  t.ytMiss = true;
+  toast('這首沒有可內嵌的影片，跳到下一首');
+  renderTracks();
+  if ($('#autoNext').checked) startTrack(state.qIndex + 1, 1);
 }
 function applyMatch(track, data) {
   track.yt = data;
@@ -714,6 +884,8 @@ function prefetchAround(i) {
 }
 async function beginYouTube(t, i, token) {
   showDock();
+  const waiting = $('#ytWaiting');
+  if (waiting) { waiting.textContent = '正在尋找 YouTube 影片…'; waiting.classList.remove('hidden'); }
   setMatchLabel('正在尋找 YouTube 影片…');
   updateNow();
   let data = null;
@@ -755,7 +927,7 @@ function advanceYouTube() {
     liveToken += 1;
     state.qIndex = i;
     audio.dataset.trackId = t.id;
-    loadYT(picked, liveToken);
+    loadYT(picked, liveToken, { autoplay: true });
     updateNow();
     prefetchAround(i);
     return;
@@ -786,7 +958,7 @@ $('#pickList').addEventListener('click', e => {
   t.ytVideoId = c.videoId;
   t.ytMiss = false;
   liveToken += 1;
-  loadYT(t.ytPick, liveToken);
+  loadYT(t.ytPick, liveToken, { autoplay: true });
   updateNow();
   closePick();
   if (state.view && state.view.kind === 'custom') saveCustom();
@@ -998,6 +1170,8 @@ $('#shareBackdrop').onclick = closeShare;
 $('#shareClose').onclick = closeShare;
 $('#ytExportBackdrop').onclick = closeYouTubeExport;
 $('#ytExportClose').onclick = closeYouTubeExport;
+$('#lockPrevAdd').checked = lsGet('spp.lockPrevAdds') === '1';
+$('#lockPrevAdd').addEventListener('change', e => lsSet('spp.lockPrevAdds', e.target.checked ? '1' : '0'));
 $('#exportBtn').onclick = () => openShare();
 $('#ytExportBtn').onclick = () => { const pl = currentCustom(); if (pl) openYouTubeExport(pl); };
 $('#importBtn').onclick = () => $('#importFile').click();

@@ -52,6 +52,7 @@
           <div class="view-actions">
             <button id="playAllBtn" class="btn primary round">▶ 播放全部</button>
             <button id="shuffleBtn" class="btn ghost round">🔀 隨機播放</button>
+            <button type="button" id="setDefaultBtn" class="btn ghost round hidden">設為預設歌單</button>
             <button type="button" id="ytExportBtn" class="btn primary round hidden">在 YouTube 開啟</button>
             <button type="button" id="exportBtn" class="btn ghost round hidden">匯出／分享</button>
             <button type="button" id="renameBtn" class="btn ghost round hidden">重新命名</button>
@@ -71,7 +72,10 @@
 
 <footer class="player">
   <div id="ytDock" class="yt-dock hidden">
-    <div class="yt-frame"><div id="ytMount"></div></div>
+    <div class="yt-frame">
+      <iframe id="ytEmbed" title="YouTube 影片" width="640" height="360" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
+      <div id="ytWaiting" class="yt-waiting">正在尋找 YouTube 影片…</div>
+    </div>
     <button type="button" id="ytPickBtn" class="yt-match">尚未配對 YouTube 影片</button>
   </div>
     <div class="now">
@@ -90,6 +94,7 @@
       <button type="button" id="prevBtn" class="ctrl" title="上一首">⏮</button>
       <button type="button" id="playBtn" class="ctrl big" title="播放 / 暫停">▶</button>
       <button type="button" id="nextBtn" class="ctrl" title="下一首">⏭</button>
+      <button type="button" id="heartBtn" class="ctrl heart" title="加入預設歌單" disabled>♡</button>
     </div>
     <div class="progress-row">
       <span id="curTime">0:00</span>
@@ -103,6 +108,7 @@
       <button type="button" id="modeVideo" class="mode-btn">YouTube</button>
     </div>
     <label class="toggle" title="播完自動下一首"><input type="checkbox" id="autoNext" checked /> 自動下一首</label>
+    <label class="toggle" title="開啟後，鎖屏的上一首會把目前歌曲加入預設歌單，然後播放下一首"><input type="checkbox" id="lockPrevAdd" /> 鎖屏上一首 = 加入預設歌單</label>
     <span>🔊</span><input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" />
   </div>
 </footer>
