@@ -87,7 +87,7 @@
       <button type="button" id="nowTitle" class="now-title">—</button>
       <div id="nowArtist" class="now-artist"></div>
     </div>
-    <button type="button" id="lyricsBtn" class="text-btn" title="歌詞">歌詞</button>
+    <button type="button" id="aboutBtn" class="text-btn" title="歌曲介紹">介紹</button>
     <button type="button" id="nowAddBtn" class="icon-btn" title="加入歌單" disabled>＋</button>
   </div>
   <div class="controls">
@@ -177,14 +177,14 @@
 </div>
 
 <input id="importFile" type="file" accept="application/json,.json" hidden />
-<div id="lyricsSheet" class="sheet hidden">
-  <div class="sheet-backdrop" id="lyricsBackdrop"></div>
-  <div class="sheet-card lyrics-card" role="dialog" aria-modal="true" aria-labelledby="lyricsTitle">
+<div id="aboutSheet" class="sheet hidden">
+  <div class="sheet-backdrop" id="aboutBackdrop"></div>
+  <div class="sheet-card about-card" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
     <div class="sheet-head">
-      <div id="lyricsTitle" class="sheet-title">歌詞</div>
-      <button type="button" id="lyricsClose" class="icon-btn" aria-label="關閉">✕</button>
+      <div id="aboutTitle" class="sheet-title">歌曲介紹</div>
+      <button type="button" id="aboutClose" class="icon-btn" aria-label="關閉">✕</button>
     </div>
-    <div id="lyricsBody" class="lyrics-body"></div>
+    <div id="aboutBody" class="about-body"></div>
   </div>
 </div>
 

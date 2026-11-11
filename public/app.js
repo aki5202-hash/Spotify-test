@@ -237,7 +237,7 @@ function renderTracks() {
         <span class="t-text"><div class="t-title">${esc(t.title)}${state.mode === 'youtube' ? ytBadge : (t.preview ? '' : '<span class="badge">無試聽</span>')}${t.video ? '<span class="badge clip">短片</span>' : ''}</div><div class="t-artist">${esc(t.artist)}</div></span></span>
       <span class="t-dur">${fmt((t.duration || 0) / 1000)}</span>
         <span class="t-actions">
-        <button type="button" class="icon-btn lyrics" title="歌詞" aria-label="歌詞">詞</button>
+        <button type="button" class="icon-btn about" title="歌曲介紹" aria-label="歌曲介紹">介</button>
         <button type="button" class="icon-btn add" title="加入歌單" aria-label="加入歌單">＋</button>
         ${isCustom ? '<button type="button" class="icon-btn remove" title="從此歌單移除" aria-label="移除">✕</button>' : ''}
       </span>
@@ -541,7 +541,7 @@ audio.addEventListener('playing', () => {
 });
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-  if (e.key === 'Escape') { closeSheet(); closeShare(); closeYouTubeExport(); closePick(); closeLyrics(); closeModal(null); return; }
+  if (e.key === 'Escape') { closeSheet(); closeShare(); closeYouTubeExport(); closePick(); closeAbout(); closeModal(null); return; }
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
   if (e.code === 'ArrowRight' && e.shiftKey) next();
   if (e.code === 'ArrowLeft' && e.shiftKey) prev();
@@ -694,7 +694,7 @@ $('#trackList').addEventListener('click', e => {
   const tracks = currentViewTracks();
   const t = tracks[i];
   if (!t) return;
-  if (e.target.closest('.lyrics')) { e.stopPropagation(); openLyrics(t); return; }
+  if (e.target.closest('.about')) { e.stopPropagation(); openAbout(t); return; }
   if (e.target.closest('.add')) { e.stopPropagation(); openSheet(t); return; }
   if (e.target.closest('.remove')) {
     const pl = state.custom.find(p => p.id === state.view.id);
@@ -1207,32 +1207,34 @@ $('#shareBackdrop').onclick = closeShare;
 $('#shareClose').onclick = closeShare;
 $('#ytExportBackdrop').onclick = closeYouTubeExport;
 $('#ytExportClose').onclick = closeYouTubeExport;
-function closeLyrics() { $('#lyricsSheet').classList.add('hidden'); }
-function renderLyrics(d) {
-  const lines = (Array.isArray(d.lyrics) ? d.lyrics : []).map(line => `<p class="lyric-line">${esc(line || '') || '&nbsp;'}</p>`).join('');
-  $('#lyricsTitle').textContent = '歌詞';
-  $('#lyricsBody').innerHTML = `<div class="lyric-head"><strong>${esc(d.title || '')}</strong><div>${esc(d.artist || '')}</div></div><div class="lyric-lines">${lines}</div>`;
+function closeAbout() { $('#aboutSheet').classList.add('hidden'); }
+function renderAbout(d) {
+  const thumb = d.thumbnail ? `<img class="about-thumb" alt="" src="${esc(d.thumbnail)}" />` : '';
+  const fallback = d.type === 'artist' ? '<p class="about-fallback">找不到這首歌的介紹，以下是歌手介紹</p>' : '';
+  const link = d.url ? `<a class="btn ghost" target="_blank" rel="noopener" href="${esc(d.url)}">在維基百科閱讀</a>` : '';
+  $('#aboutTitle').textContent = '歌曲介紹';
+  $('#aboutBody').innerHTML = `<div class="about-head">${thumb}<div><strong>${esc(d.title || '')}</strong></div></div>${fallback}<p class="about-text">${esc(d.extract || '')}</p>${link}`;
 }
-async function openLyrics(track) {
+async function openAbout(track) {
   track = track || state.queue[state.qIndex];
   if (!track || !track.title) { toast('還沒有歌曲'); return; }
-  $('#lyricsSheet').classList.remove('hidden');
-  $('#lyricsTitle').textContent = '歌詞';
-  $('#lyricsBody').innerHTML = '<p class="sheet-note">正在讀取歌詞…</p>';
+  $('#aboutSheet').classList.remove('hidden');
+  $('#aboutTitle').textContent = '歌曲介紹';
+  $('#aboutBody').innerHTML = '<p class="sheet-note">正在讀取介紹…</p>';
   try {
     const q = new URLSearchParams({ artist: track.artist || '', title: track.title || '' });
-    const r = await fetch('/api/lyrics?' + q);
+    const r = await fetch('/api/about?' + q);
     const d = await r.json();
-    if (!r.ok) throw new Error(d.error || '找不到這首歌的歌詞。');
-    renderLyrics(d);
+    if (!r.ok) throw new Error(d.error || '找不到這首歌的介紹。');
+    renderAbout(d);
   } catch (err) {
-    $('#lyricsBody').innerHTML = `<p class="sheet-note">${esc(err.message || '讀取失敗')}</p>`;
+    $('#aboutBody').innerHTML = `<p class="sheet-note">${esc(err.message || '找不到這首歌的介紹。')}</p>`;
   }
 }
-$('#lyricsBtn').onclick = () => openLyrics();
-$('#nowTitle').onclick = () => { if (state.queue[state.qIndex]) openLyrics(); };
-$('#lyricsBackdrop').onclick = closeLyrics;
-$('#lyricsClose').onclick = closeLyrics;
+$('#aboutBtn').onclick = () => openAbout();
+$('#nowTitle').onclick = () => { if (state.queue[state.qIndex]) openAbout(); };
+$('#aboutBackdrop').onclick = closeAbout;
+$('#aboutClose').onclick = closeAbout;
 $('#lockPrevAdd').checked = lockPrevEnabled();
 $('#lockPrevAdd').addEventListener('change', e => {
   lsSet('spp.lockPrevAdds', e.target.checked ? '1' : '0');
