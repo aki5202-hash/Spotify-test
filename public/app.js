@@ -236,7 +236,8 @@ function renderTracks() {
       <span class="t-main"><img class="t-cover" data-cover="${t.id}" src="${esc(t.cover || PLACEHOLDER)}" alt="" loading="lazy" onerror="imgErr(this)" />
         <span class="t-text"><div class="t-title">${esc(t.title)}${state.mode === 'youtube' ? ytBadge : (t.preview ? '' : '<span class="badge">無試聽</span>')}${t.video ? '<span class="badge clip">短片</span>' : ''}</div><div class="t-artist">${esc(t.artist)}</div></span></span>
       <span class="t-dur">${fmt((t.duration || 0) / 1000)}</span>
-      <span class="t-actions">
+        <span class="t-actions">
+        <button type="button" class="icon-btn lyrics" title="歌詞" aria-label="歌詞">詞</button>
         <button type="button" class="icon-btn add" title="加入歌單" aria-label="加入歌單">＋</button>
         ${isCustom ? '<button type="button" class="icon-btn remove" title="從此歌單移除" aria-label="移除">✕</button>' : ''}
       </span>
@@ -308,7 +309,9 @@ function startTrack(i, dir) {
   const token = liveToken;
   audio.dataset.token = String(token);
   audio.dataset.trackId = t.id;
-  audio.loop = false;
+  // iOS drops the audio session if a preview reaches a natural end while locked.
+  // Loop the element so the session stays open, and advance when it jumps back to 0.
+  audio.loop = true;
   ignoreEnded = true;
   clearTimeout(ignoreTimer);
   ignoreTimer = setTimeout(() => { if (liveToken === token) ignoreEnded = false; }, 350);
@@ -363,6 +366,18 @@ function nowAlbum() {
   }
   return (state.source && state.source.name) || '';
 }
+function bindMediaSession() {
+  if (!('mediaSession' in navigator)) return;
+  const set = (name, fn) => { try { navigator.mediaSession.setActionHandler(name, fn); } catch {} };
+  // iOS 17/18 shows ±10s skip buttons if seek handlers exist, or if seekto/duration is advertised.
+  set('seekbackward', null);
+  set('seekforward', null);
+  set('seekto', null);
+  set('play', () => { if (state.mode === 'youtube') { try { ytPlayer && ytPlayer.playVideo && ytPlayer.playVideo(); } catch {} } else { unlockAudio(); const p = audio.play(); if (p) p.then(() => bindMediaSession()).catch(() => {}); } });
+  set('pause', () => { if (state.mode === 'youtube') { try { ytPlayer && ytPlayer.pauseVideo && ytPlayer.pauseVideo(); } catch {} } else audio.pause(); });
+  set('nexttrack', () => next());
+  set('previoustrack', () => mediaPrevious());
+}
 function publishMediaSession(t) {
   if (!('mediaSession' in navigator)) return;
   try {
@@ -370,16 +385,7 @@ function publishMediaSession(t) {
     const art = t.cover ? [96, 128, 192, 256, 384, 512].map(size => ({ src: t.cover, sizes: `${size}x${size}`, type: 'image/jpeg' })) : [];
     navigator.mediaSession.metadata = new MediaMetadata({ title: t.title || '', artist: t.artist || '', album: nowAlbum(), artwork: art });
   } catch {}
-  updatePositionState();
-}
-function updatePositionState() {
-  if (!('mediaSession' in navigator) || !navigator.mediaSession.setPositionState) return;
-  if (state.mode === 'youtube') return;
-  const d = audio.duration;
-  if (!isFinite(d) || d <= 0) return;
-  try {
-    navigator.mediaSession.setPositionState({ duration: d, playbackRate: audio.playbackRate || 1, position: Math.min(d, Math.max(0, audio.currentTime || 0)) });
-  } catch {}
+  bindMediaSession();
 }
 function updateHeart() {
   const btn = $('#heartBtn');
@@ -404,7 +410,6 @@ function updatePlayBtn() {
   if ('mediaSession' in navigator) {
     try { navigator.mediaSession.playbackState = paused ? 'paused' : 'playing'; } catch {}
   }
-  updatePositionState();
 }
 function togglePlay() {
   if (state.mode === 'youtube') {
@@ -455,24 +460,31 @@ audio.addEventListener('error', () => {
   toast('這首試聽載入失敗，跳到下一首');
   if ($('#autoNext').checked) setTimeout(() => { if (audio.dataset.token === token) advance(1); }, 250);
 });
+function maybeLoopAdvance() {
+  if (state.mode === 'youtube') return false;
+  const t = audio.currentTime || 0;
+  const id = audio.dataset.trackId || '';
+  // iOS loops the preview instead of firing ended while locked. A jump back to the start means the clip finished.
+  if (!audio.paused && !userSeek && !ignoreEnded && lastSample.id === id && lastSample.t > 8 && t + 1 < lastSample.t && t < 1.5 && $('#autoNext').checked) {
+    lastSample = { t, id };
+    onPreviewEnded();
+    return true;
+  }
+  return false;
+}
+audio.addEventListener('seeked', () => { maybeLoopAdvance(); });
 audio.addEventListener('timeupdate', () => {
   if (state.mode === 'youtube') return;
   const src = audio.currentSrc || audio.src || '';
   if (!src || src.startsWith('data:')) return;
+  if (maybeLoopAdvance()) return;
   const t = audio.currentTime || 0;
   const id = audio.dataset.trackId || '';
-  // 手機若沒送出 ended、反而把同一首跳回開頭，就當成播完並換下一首
-  if (!audio.paused && !userSeek && !ignoreEnded && lastSample.id === id && lastSample.t > 8 && t < 1.2 && $('#autoNext').checked) {
-    lastSample = { t, id };
-    onPreviewEnded();
-    return;
-  }
   lastSample = { t, id };
   const d = (isFinite(audio.duration) && audio.duration > 0) ? audio.duration : 30;
   $('#curTime').textContent = fmt(t);
   $('#durTime').textContent = fmt(d);
   $('#progressFill').style.width = Math.min(100, t / d * 100) + '%';
-  updatePositionState();
 });
 $('#progress').addEventListener('pointerdown', markUserSeek);
 $('#progress').addEventListener('click', e => {
@@ -493,23 +505,15 @@ $('#volume').addEventListener('input', e => {
 });
 audio.volume = +(lsGet('spp.vol') || 0.8); $('#volume').value = audio.volume;
 $('#playBtn').onclick = togglePlay; $('#nextBtn').onclick = next; $('#prevBtn').onclick = prev; $('#heartBtn').onclick = heartToggle;
-if ('mediaSession' in navigator) {
-  const setHandler = (name, fn) => { try { navigator.mediaSession.setActionHandler(name, fn); } catch {} };
-  setHandler('play', () => { if (state.mode === 'youtube') { try { ytPlayer && ytPlayer.playVideo && ytPlayer.playVideo(); } catch {} } else { unlockAudio(); const p = audio.play(); if (p) p.catch(() => {}); } });
-  setHandler('pause', () => { if (state.mode === 'youtube') { try { ytPlayer && ytPlayer.pauseVideo && ytPlayer.pauseVideo(); } catch {} } else audio.pause(); });
-  setHandler('nexttrack', () => next());
-  setHandler('previoustrack', () => mediaPrevious());
-  setHandler('seekto', details => {
-    if (!details || details.seekTime == null || state.mode === 'youtube') return;
-    markUserSeek();
-    const d = audio.duration;
-    if (isFinite(d) && d > 0) audio.currentTime = Math.max(0, Math.min(d, details.seekTime));
-    updatePositionState();
-  });
-}
+bindMediaSession();
+audio.addEventListener('playing', () => {
+  bindMediaSession();
+  const t = state.queue[state.qIndex];
+  if (t && state.mode !== 'youtube') publishMediaSession(t);
+});
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-  if (e.key === 'Escape') { closeSheet(); closeShare(); closeYouTubeExport(); closePick(); closeModal(null); return; }
+  if (e.key === 'Escape') { closeSheet(); closeShare(); closeYouTubeExport(); closePick(); closeLyrics(); closeModal(null); return; }
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
   if (e.code === 'ArrowRight' && e.shiftKey) next();
   if (e.code === 'ArrowLeft' && e.shiftKey) prev();
@@ -659,6 +663,7 @@ $('#trackList').addEventListener('click', e => {
   const tracks = currentViewTracks();
   const t = tracks[i];
   if (!t) return;
+  if (e.target.closest('.lyrics')) { e.stopPropagation(); openLyrics(t); return; }
   if (e.target.closest('.add')) { e.stopPropagation(); openSheet(t); return; }
   if (e.target.closest('.remove')) {
     const pl = state.custom.find(p => p.id === state.view.id);
@@ -1170,6 +1175,41 @@ $('#shareBackdrop').onclick = closeShare;
 $('#shareClose').onclick = closeShare;
 $('#ytExportBackdrop').onclick = closeYouTubeExport;
 $('#ytExportClose').onclick = closeYouTubeExport;
+function closeLyrics() { $('#lyricsSheet').classList.add('hidden'); }
+function renderLyrics(d) {
+  const lines = (d.lines || []).map(line => {
+    const bits = (line.parts || []).map(p => {
+      const text = esc(p.text || '');
+      if (!p.note) return text;
+      return `<mark class="lyric-mark">${text}</mark><div class="lyric-note"><span class="lyric-note-label">註解</span>${esc(p.note)}</div>`;
+    }).join('');
+    return `<p class="lyric-line">${bits || '&nbsp;'}</p>`;
+  }).join('');
+  const about = d.about ? `<section class="lyric-about"><h4>歌曲簡介</h4><p>${esc(d.about)}</p></section>` : '';
+  const link = d.url ? `<a class="btn ghost" target="_blank" rel="noopener" href="${esc(d.url)}">在 Genius 查看</a>` : '';
+  $('#lyricsTitle').textContent = d.title ? `歌詞 · ${d.title}` : '歌詞';
+  $('#lyricsBody').innerHTML = `<div class="lyric-head"><strong>${esc(d.title || '')}</strong><div>${esc(d.artist || '')}</div></div>${about}<div class="lyric-lines">${lines || '<p class="sheet-note">這首歌在 Genius 上沒有歌詞。</p>'}</div><p class="sheet-note">歌詞與註解來自 Genius，註解已全部展開。</p>${link}`;
+}
+async function openLyrics(track) {
+  track = track || state.queue[state.qIndex];
+  if (!track || !track.title) { toast('還沒有歌曲'); return; }
+  $('#lyricsSheet').classList.remove('hidden');
+  $('#lyricsTitle').textContent = '歌詞';
+  $('#lyricsBody').innerHTML = '<p class="sheet-note">正在讀取 Genius 歌詞…</p>';
+  try {
+    const q = new URLSearchParams({ artist: track.artist || '', title: track.title || '' });
+    const r = await fetch('/api/lyrics?' + q);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || '讀取失敗');
+    renderLyrics(d);
+  } catch (err) {
+    $('#lyricsBody').innerHTML = `<p class="sheet-note">${esc(err.message || '讀取失敗')}</p>`;
+  }
+}
+$('#lyricsBtn').onclick = () => openLyrics();
+$('#nowTitle').onclick = () => { if (state.queue[state.qIndex]) openLyrics(); };
+$('#lyricsBackdrop').onclick = closeLyrics;
+$('#lyricsClose').onclick = closeLyrics;
 $('#lockPrevAdd').checked = lsGet('spp.lockPrevAdds') === '1';
 $('#lockPrevAdd').addEventListener('change', e => lsSet('spp.lockPrevAdds', e.target.checked ? '1' : '0'));
 $('#exportBtn').onclick = () => openShare();

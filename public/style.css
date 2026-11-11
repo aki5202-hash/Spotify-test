@@ -65,7 +65,18 @@ button{font:inherit;color:inherit;cursor:pointer;touch-action:manipulation;-webk
 .now-visual{flex:none;display:flex;align-items:center}
 .now-cover{width:58px;height:58px;border-radius:6px;background:var(--panel2);object-fit:cover;display:block}
 .now-video{width:78px;height:138px;border-radius:8px;background:#000;object-fit:cover;display:block}
-.now-text{min-width:0}.now-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.now-artist{color:var(--sub);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.now-text{min-width:0;flex:1}.now-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.button.now-title{display:block;width:100%;background:none;border:none;padding:0;text-align:left;font:inherit;font-weight:600;color:inherit;min-height:44px}.now-artist{color:var(--sub);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lyrics-card{max-height:min(92vh,900px)}
+.lyrics-body{overflow:auto;padding:4px 6px 12px;display:flex;flex-direction:column;gap:10px}
+.lyric-head strong{font-size:18px}
+.lyric-about{background:#221c12;border:1px solid #5a4a16;border-radius:10px;padding:10px 12px}
+.lyric-about h4{margin:0 0 6px;font-size:13px;color:#f3d87a}
+.lyric-about p{margin:0;color:#f6efe0;font-size:14px;line-height:1.5;white-space:pre-wrap}
+.lyric-lines{display:flex;flex-direction:column;gap:8px}
+.lyric-line{margin:0;font-size:16px;line-height:1.55}
+.lyric-mark{background:#2a3a22;color:#d8ffc8;border-radius:4px;padding:0 3px}
+.lyric-note{margin:6px 0 4px;padding:8px 10px;border-left:3px solid var(--accent);background:#171d16;border-radius:0 8px 8px 0;color:#d7e6d4;font-size:14px;line-height:1.5;white-space:pre-wrap}
+.lyric-note-label{display:block;font-size:11px;letter-spacing:.08em;color:var(--accent);margin-bottom:4px}
 .controls{display:flex;flex-direction:column;align-items:center;gap:6px}
 .buttons{display:flex;gap:18px;align-items:center}
 .ctrl{background:none;border:none;font-size:20px;color:var(--text);opacity:1;min-width:44px;min-height:44px}
