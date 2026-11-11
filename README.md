@@ -1,9 +1,10 @@
 # 🎧 Spotify 30 秒試聽播放器
 
-貼上 Spotify 歌單網址 → 自動載入每首歌的 30 秒試聽並連續播放 → 隨時把喜歡的歌加入自己的歌單。
+貼上 Spotify 或 Apple Music 歌單網址 → 自動載入每首歌的 30 秒試聽並連續播放 → 隨時把喜歡的歌加入自己的歌單。
 
 ## 功能
 - 貼上 `https://open.spotify.com/playlist/...`（含 `?si=...` 參數也可以；也支援專輯 `album/` 與單曲 `track/` 網址）
+- 也可以貼 Apple Music 歌單、專輯或歌曲網址（`music.apple.com/.../playlist/.../pl.xxxx`、`pl.u-` 分享歌單、`album/`）。試聽同樣是網站能拿到的 30 秒預覽，不是 90 秒。
 - 按「載入並播放」立即開始播放，一首播完自動下一首（可關閉「自動下一首」）
 - 播放 / 暫停 / 上一首 / 下一首、進度條拖曳、音量、隨機播放；空白鍵播放/暫停、Shift+←/→ 切歌
 - 歌曲列表顯示封面、歌名、歌手、長度，正在播放的歌會標示
@@ -19,6 +20,8 @@ Spotify Web API 自 2024/11 起對新應用不再提供 `preview_url`，而且�
 2. 每首歌的封面再由 `https://open.spotify.com/embed/track/<id>` 取得（前端以 4 個並行請求慢慢補齊，伺服器端快取 30 分鐘）。
 3. 前端用 `<audio>` 直接播放 p.scdn.co 的 MP3。
 
+Apple Music 不需要金鑰：後端抓 `music.apple.com` 頁面裡的 `serialized-server-data`（沒有時改讀 schema.org `MusicPlaylist`），再用免費的 iTunes Lookup API（`https://itunes.apple.com/lookup?id=&country=`，一次最多 150 個）補上 `previewUrl`（`audio-ssl.itunes.apple.com` 的 30 秒 m4a）與封面。歌曲欄位與 Spotify 相同，所以自動下一首、自訂歌單、愛心、鎖屏加入、YouTube 模式與匯出都沿用同一套。
+
 ## 執行
 需要 Node.js 18 以上（無任何 npm 依賴）。
 ```bash
@@ -29,7 +32,7 @@ PORT=3000 node server.js  # 自訂埠號
 打開瀏覽器到 http://localhost:8787 ，貼上歌單網址按「載入並播放」。
 
 ### API
-- `GET /api/playlist?url=<Spotify 網址或 ID>` → `{ name, owner, cover, tracks:[{id,title,artist,duration,preview,cover,video,videoThumb}], limited }`
+- `GET /api/playlist?url=<Spotify 或 Apple Music 網址>` → `{ name, owner, cover, tracks:[{id,title,artist,duration,preview,cover,video,videoThumb}], limited }`
 - `GET /api/track/<trackId>` → `{ id, title, artist, duration, preview, cover, video, videoThumb }`
 - `video` 只會在公開嵌入頁的 `videoPreview` 有網址時出現（不使用登入憑證）。Canvas / Clips 的 `canvaz.scdn.co` 影片不在這個公開資料裡。
 - `GET /api/youtube?artist=&title=&duration=` → 比對公開 YouTube 搜尋結果後的 `{ picked, candidates, skipped }`（伺服器會快取，不使用 API 金鑰）

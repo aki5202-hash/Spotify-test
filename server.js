@@ -3,6 +3,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { matchYouTube, matchMany } = require('./youtube');
+const { parseAppleUrl, getAppleCollection } = require('./apple');
 
 const PORT = process.env.PORT || 8787;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
@@ -56,13 +57,15 @@ function pickVideoThumb(entity) {
 }
 
 function parseUrl(input) {
+  const apple = parseAppleUrl(input);
+  if (apple) return apple;
   input = (input || '').trim();
   let m = input.match(/spotify:(playlist|album|track):([A-Za-z0-9]{22})/);
-  if (m) return { type: m[1], id: m[2] };
+  if (m) return { source: 'spotify', type: m[1], id: m[2] };
   m = input.match(/open\.spotify\.com\/(?:intl-[a-z-]+\/)?(?:embed\/)?(playlist|album|track)\/([A-Za-z0-9]{22})/);
-  if (m) return { type: m[1], id: m[2] };
+  if (m) return { source: 'spotify', type: m[1], id: m[2] };
   m = input.match(/^([A-Za-z0-9]{22})$/);
-  if (m) return { type: 'playlist', id: m[1] };
+  if (m) return { source: 'spotify', type: 'playlist', id: m[1] };
   return null;
 }
 
@@ -123,7 +126,8 @@ http.createServer(async (req, res) => {
   try {
     if (u.pathname === '/api/playlist') {
       const p = parseUrl(u.searchParams.get('url'));
-      if (!p) return send(res, 400, { error: '請輸入有效的 Spotify 歌單網址，例如 https://open.spotify.com/playlist/...' });
+      if (!p) return send(res, 400, { error: '請輸入有效的 Spotify 或 Apple Music 歌單網址' });
+      if (p.source === 'apple') return send(res, 200, await getAppleCollection(p));
       return send(res, 200, await getCollection(p.type, p.id));
     }
     let m = u.pathname.match(/^\/api\/track\/([A-Za-z0-9]{22})$/);

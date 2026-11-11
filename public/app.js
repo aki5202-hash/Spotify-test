@@ -55,7 +55,17 @@ function saveCustom() {
 }
 const uid = () => Math.random().toString(36).slice(2, 10);
 function videoIdOf(t) { return (t && ((t.ytPick && t.ytPick.videoId) || t.ytVideoId)) || null; }
-const slim = t => ({ id: t.id, title: t.title, artist: t.artist, duration: t.duration, preview: t.preview, cover: t.cover, video: t.video || null, videoThumb: t.videoThumb || null, ytVideoId: videoIdOf(t) });
+const isSpotifyId = id => /^[A-Za-z0-9]{22}$/.test(String(id || ''));
+function trackLink(t) {
+  if (t && typeof t.url === 'string' && /^https?:\/\//.test(t.url)) return t.url;
+  if (t && isSpotifyId(t.id)) return 'https://open.spotify.com/track/' + t.id;
+  return '';
+}
+const slim = t => {
+  const o = { id: t.id, title: t.title, artist: t.artist, duration: t.duration, preview: t.preview, cover: t.cover, video: t.video || null, videoThumb: t.videoThumb || null, ytVideoId: videoIdOf(t) };
+  if (t.url) o.url = t.url;
+  return o;
+};
 
 /* ---------- 工具 ---------- */
 const fmt = s => { s = Math.max(0, Math.floor(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
@@ -122,7 +132,7 @@ const detailsCache = new Map();
 const inflight = new Map();
 let coverQueue = [], coverActive = 0;
 function ensureDetails(track) {
-  if (!track) return Promise.resolve(track);
+  if (!track || !isSpotifyId(track.id)) return Promise.resolve(track);
   const c = detailsCache.get(track.id);
   if (c) { applyDetails(track.id, c); return Promise.resolve(track); }
   if (inflight.has(track.id)) return inflight.get(track.id);
@@ -199,7 +209,8 @@ function showView(view) {
   const pl = isCustom ? state.custom.find(p => p.id === view.id) : state.source;
   if (!pl) { state.view = null; $('#viewSection').classList.add('hidden'); $('#emptyState').classList.remove('hidden'); renderSidebar(); return; }
   const tracks = pl.tracks;
-  $('#viewType').textContent = isCustom ? '我的歌單' : 'Spotify 歌單';
+  const apple = !isCustom && pl.source === 'apple';
+  $('#viewType').textContent = isCustom ? '我的歌單' : apple ? (pl.type === 'album' ? 'Apple Music 專輯' : pl.type === 'track' ? 'Apple Music 歌曲' : 'Apple Music 歌單') : 'Spotify 歌單';
   $('#viewTitle').textContent = pl.name;
   const n = tracks.length, p = tracks.filter(t => t.preview).length;
   $('#viewSub').textContent = isCustom ? `${n} 首歌曲` : `${pl.owner ? pl.owner + ' · ' : ''}${n} 首歌曲 · ${p} 首有 30 秒試聽`;
@@ -212,9 +223,17 @@ function showView(view) {
   if (isCustom) $('#setDefaultBtn').textContent = pl.id === lsGet('spp.defaultPl') ? '目前是預設歌單' : '設為預設歌單';
   const os = $('#openSpotify');
   os.classList.toggle('hidden', isCustom);
-  if (!isCustom) os.href = `https://open.spotify.com/${pl.type || 'playlist'}/${pl.id}`;
+  if (!isCustom) {
+    os.textContent = apple ? '在 Apple Music 開啟' : '在 Spotify 開啟';
+    os.href = apple && pl.url ? pl.url : `https://open.spotify.com/${pl.type || 'playlist'}/${pl.id}`;
+  }
   const notice = $('#notice');
-  if (!isCustom && pl.limited) { notice.textContent = '提示：Spotify 公開嵌入頁面最多只提供前 100 首歌曲，超過的部分無法載入。'; notice.classList.remove('hidden'); }
+  if (!isCustom && pl.limited) {
+    notice.textContent = apple
+      ? '提示：這個 Apple Music 頁面沒有列出全部歌曲，只載入了已顯示的部分。'
+      : '提示：Spotify 公開嵌入頁面最多只提供前 100 首歌曲，超過的部分無法載入。';
+    notice.classList.remove('hidden');
+  }
   else if (isCustom && !n) { notice.textContent = '這個歌單還是空的。到來源歌單按歌曲旁的 ＋ 就能加入。'; notice.classList.remove('hidden'); }
   else notice.classList.add('hidden');
   renderTracks();
@@ -713,7 +732,12 @@ $('#trackList').addEventListener('click', e => {
     playList(tracks, i, viewKey());
     return;
   }
-  if (!t.preview) { toast('這首歌沒有 30 秒試聽，可在 Spotify 開啟收聽'); window.open(`https://open.spotify.com/track/${t.id}`, '_blank'); return; }
+  if (!t.preview) {
+    const href = trackLink(t);
+    toast(href.includes('music.apple.com') ? '這首歌沒有 30 秒試聽，可在 Apple Music 開啟收聽' : '這首歌沒有 30 秒試聽，可在 Spotify 開啟收聽');
+    if (href) window.open(href, '_blank');
+    return;
+  }
   unlockAudio();
   playList(tracks, i, viewKey());
 });
@@ -1054,7 +1078,8 @@ function textList(playlists) {
     const lines = [p.name];
     (p.tracks || []).forEach((t, i) => {
       lines.push(`${i + 1}. ${t.artist || '未知歌手'} - ${t.title}`);
-      if (t.id) lines.push('https://open.spotify.com/track/' + t.id);
+      const page = trackLink(t);
+      if (page) lines.push(page);
       const yid = videoIdOf(t);
       if (yid) lines.push('https://www.youtube.com/watch?v=' + yid);
     });
@@ -1065,7 +1090,7 @@ function csvOf(playlists) {
   const rows = [['playlist', 'artist', 'title', 'spotify_url', 'youtube_url', 'duration_ms']];
   for (const p of playlists) for (const t of p.tracks || []) {
     const yid = videoIdOf(t);
-    rows.push([p.name, t.artist || '', t.title || '', t.id ? 'https://open.spotify.com/track/' + t.id : '', yid ? 'https://www.youtube.com/watch?v=' + yid : '', t.duration || '']);
+    rows.push([p.name, t.artist || '', t.title || '', trackLink(t), yid ? 'https://www.youtube.com/watch?v=' + yid : '', t.duration || '']);
   }
   const escCell = v => { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   return '\uFEFF' + rows.map(r => r.map(escCell).join(',')).join('\n');
@@ -1173,6 +1198,7 @@ function importData(data) {
       if (!t || !t.title) return null;
       const id = String(t.id || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 32);
       const item = { id: id || uid(), title: String(t.title).slice(0, 200), artist: String(t.artist || '').slice(0, 200), duration: Number(t.duration) || 0, preview: t.preview || null, cover: t.cover || null, video: t.video || null, videoThumb: t.videoThumb || null, ytVideoId: t.ytVideoId || null };
+      if (typeof t.url === 'string' && /^https?:\/\//.test(t.url)) item.url = t.url.slice(0, 500);
       if (item.ytVideoId) item.ytPick = { videoId: item.ytVideoId, title: item.title, channel: '', kind: 'picked', url: 'https://www.youtube.com/watch?v=' + item.ytVideoId };
       return item;
     }).filter(Boolean).slice(0, 500);
@@ -1225,7 +1251,7 @@ $('#importFile').addEventListener('change', async () => {
   } catch (err) { toast(err.message || '匯入失敗'); }
 });
 
-$('#loadForm').addEventListener('submit', e => { e.preventDefault(); if (state.mode === 'youtube') armYouTube(); else unlockAudio(); const u = $('#urlInput').value.trim(); if (u) loadPlaylist(u); else toast('請先貼上 Spotify 歌單網址'); });
+$('#loadForm').addEventListener('submit', e => { e.preventDefault(); if (state.mode === 'youtube') armYouTube(); else unlockAudio(); const u = $('#urlInput').value.trim(); if (u) loadPlaylist(u); else toast('請先貼上 Spotify 或 Apple Music 歌單網址'); });
 $('#demoBtn').onclick = () => { $('#urlInput').value = 'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M'; loadPlaylist($('#urlInput').value); };
 
 const qp = new URLSearchParams(location.search).get('url');
