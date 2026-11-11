@@ -29,6 +29,31 @@ function pickImage(imgs, size = 300) {
   return String(s[0].url).replace(/^https:\/\/image-cdn-[a-z]+\.spotifycdn\.com\//, 'https://i.scdn.co/');
 }
 
+// Public embed pages sometimes include a music-video preview. Canvas / Clips files are not in this payload.
+function httpUrl(v) {
+  return typeof v === 'string' && /^https?:\/\//i.test(v) ? v : null;
+}
+function pickVideoUrl(entity) {
+  const v = entity && entity.videoPreview;
+  if (!v) return null;
+  if (httpUrl(v)) return v;
+  const direct = httpUrl(v.url) || httpUrl(v.uri);
+  if (direct) return direct;
+  const sources = Array.isArray(v.sources) ? v.sources : [];
+  for (const s of sources) {
+    const u = httpUrl(s && (s.url || s.uri));
+    if (u) return u;
+  }
+  return null;
+}
+function pickVideoThumb(entity) {
+  const t = entity && entity.videoThumbnailImage;
+  if (!t) return null;
+  if (httpUrl(t)) return t;
+  if (httpUrl(t.url)) return t.url;
+  return pickImage(t.sources || t.image || (Array.isArray(t) ? t : null), 300);
+}
+
 function parseUrl(input) {
   input = (input || '').trim();
   let m = input.match(/spotify:(playlist|album|track):([A-Za-z0-9]{22})/);
@@ -54,6 +79,8 @@ async function getCollection(type, id) {
     duration: t.duration,
     preview: t.audioPreview?.url || null,
     cover: type === 'track' ? cover : (type === 'album' ? cover : null),
+    video: pickVideoUrl(t),
+    videoThumb: pickVideoThumb(t),
   }));
   return { type, id, name: e.name || e.title, owner: e.subtitle, cover, tracks, limited: type !== 'track' && tracks.length >= 100 };
 }
@@ -64,6 +91,8 @@ async function getTrack(id) {
     id, title: e.title || e.name, artist: (e.artists || []).map(a => a.name).join(', '),
     duration: e.duration, preview: e.audioPreview?.url || null,
     cover: pickImage(e.visualIdentity?.image, 300),
+    video: pickVideoUrl(e),
+    videoThumb: pickVideoThumb(e),
   };
 }
 

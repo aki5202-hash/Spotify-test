@@ -29,8 +29,9 @@ PORT=3000 node server.js  # 自訂埠號
 打開瀏覽器到 http://localhost:8787 ，貼上歌單網址按「載入並播放」。
 
 ### API
-- `GET /api/playlist?url=<Spotify 網址或 ID>` → `{ name, owner, cover, tracks:[{id,title,artist,duration,preview,cover}], limited }`
-- `GET /api/track/<trackId>` → `{ id, title, artist, duration, preview, cover }`
+- `GET /api/playlist?url=<Spotify 網址或 ID>` → `{ name, owner, cover, tracks:[{id,title,artist,duration,preview,cover,video,videoThumb}], limited }`
+- `GET /api/track/<trackId>` → `{ id, title, artist, duration, preview, cover, video, videoThumb }`
+- `video` 只會在公開嵌入頁的 `videoPreview` 有網址時出現（不使用登入憑證）。Canvas / Clips 的 `canvaz.scdn.co` 影片不在這個公開資料裡。
 
 ### 端到端測試（選用，需要 Google Chrome）
 ```bash

@@ -25,7 +25,7 @@
     <div class="side-section">
       <div class="side-title">
         我的歌單
-        <button id="newPlBtn" class="icon-btn" title="新增歌單">＋</button>
+        <button type="button" id="newPlBtn" class="icon-btn" title="新增歌單">＋</button>
       </div>
       <div id="customList"></div>
     </div>
@@ -65,19 +65,22 @@
 </div>
 
 <footer class="player">
-  <div class="now">
-    <img id="nowCover" class="now-cover" alt="" />
+    <div class="now">
+    <div class="now-visual">
+      <img id="nowCover" class="now-cover" alt="" />
+      <video id="nowVideo" class="now-video hidden" muted loop playsinline webkit-playsinline preload="none" disablepictureinpicture aria-label="歌曲短片"></video>
+    </div>
     <div class="now-text">
       <div id="nowTitle" class="now-title">—</div>
       <div id="nowArtist" class="now-artist"></div>
     </div>
-    <button id="nowAddBtn" class="icon-btn" title="加入歌單" disabled>＋</button>
+    <button type="button" id="nowAddBtn" class="icon-btn" title="加入歌單" disabled>＋</button>
   </div>
   <div class="controls">
     <div class="buttons">
-      <button id="prevBtn" class="ctrl" title="上一首">⏮</button>
-      <button id="playBtn" class="ctrl big" title="播放 / 暫停">▶</button>
-      <button id="nextBtn" class="ctrl" title="下一首">⏭</button>
+      <button type="button" id="prevBtn" class="ctrl" title="上一首">⏮</button>
+      <button type="button" id="playBtn" class="ctrl big" title="播放 / 暫停">▶</button>
+      <button type="button" id="nextBtn" class="ctrl" title="下一首">⏭</button>
     </div>
     <div class="progress-row">
       <span id="curTime">0:00</span>
@@ -91,9 +94,36 @@
   </div>
 </footer>
 
-<div id="menu" class="menu hidden"></div>
+<div id="sheet" class="sheet hidden">
+  <div class="sheet-backdrop" id="sheetBackdrop"></div>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-head">
+      <div id="sheetTitle" class="sheet-title">加入歌單</div>
+      <button type="button" id="sheetClose" class="icon-btn" aria-label="關閉">✕</button>
+    </div>
+    <div id="sheetList" class="sheet-list"></div>
+    <form id="sheetCreate" class="sheet-create">
+      <input id="sheetName" maxlength="40" autocomplete="off" enterkeyhint="done" aria-label="新歌單名稱" placeholder="新歌單名稱" />
+      <button type="submit" class="btn primary">建立並加入</button>
+    </form>
+  </div>
+</div>
+
+<div id="modal" class="modal hidden">
+  <div class="modal-backdrop" id="modalBackdrop"></div>
+  <form id="modalForm" class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <h3 id="modalTitle"></h3>
+    <p id="modalText" class="modal-text hidden"></p>
+    <input id="modalInput" class="modal-input" maxlength="40" autocomplete="off" aria-label="歌單名稱" />
+    <div class="modal-actions">
+      <button type="button" id="modalCancel" class="btn ghost">取消</button>
+      <button type="submit" id="modalConfirm" class="btn primary">確定</button>
+    </div>
+  </form>
+</div>
+
 <div id="toast" class="toast"></div>
-<audio id="audio" preload="auto"></audio>
+<audio id="audio" preload="auto" playsinline webkit-playsinline></audio>
 <script src="app.js"></script>
 </body>
 </html>
