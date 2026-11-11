@@ -37,7 +37,7 @@ PORT=3000 node server.js  # 自訂埠號
 
 播放列可在「試聽」與「YouTube」之間切換。YouTube 模式會放上標準的 `youtube.com/embed` 播放器（`playsinline=1`），第一首由使用者點播放器上的播放鍵；之後用同一個播放器在影片結束時自動換下一首。配對時會用 oEmbed 確認影片允許內嵌。
 
-鎖屏控制只註冊上一首／下一首（不註冊 10 秒快轉）。「鎖屏上一首 = 加入預設歌單」預設關閉。歌詞來自 [LRCLIB](https://lrclib.net)；若設定環境變數 `GENIUS_ACCESS_TOKEN`，註解改走 Genius 官方 API，並在歌詞下方全部展開。自訂歌單可匯出 JSON / CSV / 文字清單，並用「在 YouTube 開啟」把已配對的影片組成 `watch_videos` 歌單（每段最多 50 首）。
+鎖屏控制只註冊上一首／下一首（不註冊 10 秒快轉）。「鎖屏上一首 = 加入預設歌單」預設關閉。歌詞來自 [LRCLIB](https://lrclib.net)。自訂歌單可匯出 JSON / CSV / 文字清單，並用「在 YouTube 開啟」把已配對的影片組成 `watch_videos` 歌單（每段最多 50 首）。
 
 ### 端到端測試（選用，需要 Google Chrome）
 ```bash
