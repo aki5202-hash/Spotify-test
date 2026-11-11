@@ -3,7 +3,6 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { matchYouTube, matchMany } = require('./youtube');
-const { fetchAbout } = require('./about');
 
 const PORT = process.env.PORT || 8787;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
@@ -143,15 +142,6 @@ http.createServer(async (req, res) => {
       const tracks = Array.isArray(body.tracks) ? body.tracks.slice(0, 30) : [];
       if (!tracks.length) return send(res, 400, { error: '缺少歌曲' });
       return send(res, 200, { results: await matchMany(tracks, 3) });
-    }
-    if (u.pathname === '/api/about' && req.method === 'GET') {
-      const title = u.searchParams.get('title') || '';
-      if (!title.trim()) return send(res, 400, { error: '缺少歌名' });
-      try {
-        return send(res, 200, await fetchAbout({ artist: u.searchParams.get('artist') || '', title }));
-      } catch (err) {
-        return send(res, err.status || 502, { error: err.message || String(err) });
-      }
     }
     if (u.pathname === '/api/health') return send(res, 200, { ok: true });
     let f = u.pathname === '/' ? '/index.html' : u.pathname;

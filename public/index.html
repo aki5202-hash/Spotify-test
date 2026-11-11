@@ -84,10 +84,9 @@
       <video id="nowVideo" class="now-video hidden" muted loop playsinline webkit-playsinline preload="none" disablepictureinpicture aria-label="歌曲短片"></video>
     </div>
     <div class="now-text">
-      <button type="button" id="nowTitle" class="now-title">—</button>
+      <div id="nowTitle" class="now-title">—</div>
       <div id="nowArtist" class="now-artist"></div>
     </div>
-    <button type="button" id="aboutBtn" class="text-btn" title="歌曲介紹">介紹</button>
     <button type="button" id="nowAddBtn" class="icon-btn" title="加入歌單" disabled>＋</button>
   </div>
   <div class="controls">
@@ -177,16 +176,6 @@
 </div>
 
 <input id="importFile" type="file" accept="application/json,.json" hidden />
-<div id="aboutSheet" class="sheet hidden">
-  <div class="sheet-backdrop" id="aboutBackdrop"></div>
-  <div class="sheet-card about-card" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
-    <div class="sheet-head">
-      <div id="aboutTitle" class="sheet-title">歌曲介紹</div>
-      <button type="button" id="aboutClose" class="icon-btn" aria-label="關閉">✕</button>
-    </div>
-    <div id="aboutBody" class="about-body"></div>
-  </div>
-</div>
 
 <div id="toast" class="toast"></div>
 <audio id="audio" preload="auto" playsinline webkit-playsinline></audio>
